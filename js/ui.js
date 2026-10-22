@@ -59,7 +59,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     Escape: 'b', Backspace: 'b', x: 'b', X: 'b', k: 'b', K: 'b',
     i: 'info', I: 'info', r: 'info', R: 'info',
     e: 'end', E: 'end', n: 'next', N: 'next', Tab: 'next',
-    q: 'danger', Q: 'danger', v: 'vision', V: 'vision', m: 'mute', M: 'mute', p: 'power', P: 'power',
+    q: 'danger', Q: 'danger', v: 'vision', V: 'vision', u: 'undo', U: 'undo', m: 'mute', M: 'mute', p: 'power', P: 'power',
     '+': 'zoomin', '=': 'zoomin', '-': 'zoomout', c: 'minimap', C: 'minimap',
     h: 'hq', H: 'hq', b: 'factory', B: 'factory', l: 'intel', L: 'intel', o: 'options', O: 'options',
     t: 'chat', T: 'chat', f: 'fullscreen', F: 'fullscreen', F1: 'keys', '?': 'keys', F11: 'fullscreen',
@@ -916,6 +916,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       [['I'], 'Info zu Feld und Einheit (inkl. Ladung)'],
       [['Q'], 'Gegner-Reichweite an/aus'],
       [['V'], 'Gegner-Sicht an/aus (gelb: dort sieht dich der Gegner)'],
+      [['U'], 'Letzten Zug zurücknehmen (einmal je Runde; nicht nach Angriffen)'],
       [['C'], 'Minikarte an/aus'],
       [['+', '−'], 'Zoom']
     ]],

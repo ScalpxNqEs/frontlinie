@@ -1117,9 +1117,71 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     return ev;
   };
   // --------------------------------------------------------------- Netzwerk: Befehle & Prüfsumme
+  // --------------------------------------------------------------- Rückgängig (einmal je Runde)
+  // Vor jedem Einheiten-/Baubefehl eines Menschen wird der Zustand gesichert. Nicht zurücknehmbar sind Angriffe,
+  // Hinterhalte und Züge, die neue Gegner aufgedeckt haben (sonst gäbe es Nebel-Wissen gratis). Kräfte, Rundenende
+  // und Aufgabe löschen die Sicherung. Die Sicherung wird nicht gespeichert; players[].undoDay merkt die Nutzung.
+  Game.prototype._enemiesSeen = function (slot) {
+    var self = this, ids = [];
+    this.units.forEach(function (u) { if (self.isEnemy(u.p, slot) && self.unitVisibleTo(u, slot)) ids.push(u.id); });
+    return ids;
+  };
+  Game.prototype._undoBefore = function () {
+    var cp = this.currentPlayer();
+    if (!cp || cp.ai || this.over) return null;
+    return { snap: this.serialize(), slot: cp.slot, seen: this._enemiesSeen(cp.slot) };
+  };
+  Game.prototype._undoAfter = function (pre, ok, events, forbid, unitId, pos) {
+    if (!pre || !ok) return;   // abgelehnter Befehl: eine ältere Sicherung bleibt gültig
+    var revealed = (events || []).some(function (e) { return e.type === 'trap'; }) ||
+      this._enemiesSeen(pre.slot).some(function (id) { return pre.seen.indexOf(id) < 0; });
+    this._undo = (forbid || revealed) ? null : { snap: pre.snap, slot: pre.slot, day: this.day, turnIdx: this.turnIdx, unitId: unitId == null ? null : unitId, pos: pos || null };
+  };
+  /** Darf `slot` den letzten Zug zurücknehmen? → { ok, reason } */
+  Game.prototype.canUndo = function (slot) {
+    var cp = this.currentPlayer();
+    if (this.over || !cp || cp.slot !== slot) return { ok: false, reason: 'nicht am Zug' };
+    if (cp.undoDay === this.day) return { ok: false, reason: 'in dieser Runde schon benutzt' };
+    var u = this._undo;
+    if (!u || u.slot !== slot || u.day !== this.day || u.turnIdx !== this.turnIdx) return { ok: false, reason: 'nichts zurückzunehmen (Angriffe und aufgedeckte Gegner ausgenommen)' };
+    return { ok: true };
+  };
+  Game.prototype.undo = function (slot) {
+    var can = this.canUndo(slot);
+    if (!can.ok) return { ok: false, error: 'undo', reason: can.reason, events: [] };
+    var d = JSON.parse(this._undo.snap), self = this, unitId = this._undo.unitId, pos = this._undo.pos;
+    ['map', 'fog', 'day', 'turnIdx', 'nextId', 'rng', 'objective', 'meta', 'winner', 'over', 'players', 'units', 'weather', 'weatherLeft']
+      .forEach(function (k) { self[k] = d[k]; });
+    this._undo = null;
+    var cp = this.currentPlayer();
+    cp.undoDay = this.day;
+    this.touch();
+    var u = unitId != null ? this.unitById(unitId) : null;
+    var at = u && u.x !== undefined ? { x: u.x, y: u.y } : pos;
+    return { ok: true, events: [{ type: 'undo', slot: slot, unitId: unitId, x: at ? at.x : undefined, y: at ? at.y : undefined }] };
+  };
+  (function wrapForUndo() {
+    var commit = Game.prototype.commit, build = Game.prototype.build, power = Game.prototype.activatePower, end = Game.prototype.endTurn, resign = Game.prototype.resign;
+    Game.prototype.commit = function (unitId, path, action) {
+      var pre = this._undoBefore();
+      var r = commit.call(this, unitId, path, action);
+      this._undoAfter(pre, r && r.ok, r && r.events, !!(action && action.type === 'attack'), unitId, null);
+      return r;
+    };
+    Game.prototype.build = function (slot, type, x, y) {
+      var pre = this._undoBefore();
+      var b = build.call(this, slot, type, x, y);
+      this._undoAfter(pre, !!b, [], false, null, { x: x, y: y });
+      return b;
+    };
+    Game.prototype.activatePower = function () { var r = power.apply(this, arguments); if (r) this._undo = null; return r; };
+    Game.prototype.endTurn = function () { this._undo = null; return end.apply(this, arguments); };
+    Game.prototype.resign = function () { this._undo = null; return resign.apply(this, arguments); };
+  })();
+
   /**
    * Führt einen serialisierbaren Befehl des Spielers `slot` aus (Server und Clients identisch).
-   * cmd: {t:'unit', id, path, action} | {t:'build', type, x, y} | {t:'power', level} | {t:'end'} | {t:'resign'} | {t:'ai', slot}
+   * cmd: {t:'unit', id, path, action} | {t:'build', type, x, y} | {t:'power', level} | {t:'end'} | {t:'resign'} | {t:'ai', slot} | {t:'undo'}
    */
   Game.prototype.applyCmd = function (slot, cmd) {
     if (!cmd || this.over) return { ok: false, error: 'over' };
@@ -1141,6 +1203,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       }
       case 'end': return { ok: true, events: this.endTurn() };
       case 'resign': return { ok: true, events: this.resign(slot) };
+      case 'undo': return this.undo(slot);
       case 'ai': {
         // Abwesenden Spieler durch die KI ersetzen (nur wenn er gerade am Zug ist)
         var pl = this.playerBySlot(cmd.slot);

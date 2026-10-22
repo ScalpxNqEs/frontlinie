@@ -437,6 +437,8 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 #hud-side button:disabled { opacity: .4; cursor: default; }
 #hud-side button.hidden { display: none; }
 #hud-side #btn-next.end { background: linear-gradient(#ff8a5a, #c9311f); color: #fff; border-color: #ffb0a4; }
+#hud-side button { position: relative; }
+#hud-side #btn-next .num { position: absolute; top: 3px; right: 6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--amber); color: var(--ink); font: 700 11px/18px var(--mono); text-align: center; }
 #hud-buttons #btn-eye.on { background: linear-gradient(#ffd34d, #ff9a1f); color: var(--ink); border-color: #ffe08a; }
 @media (max-width: 600px) { #hud-side { right: 6px; } #hud-side button { width: 58px; height: 54px; } #hud.side-on .hud-bottom:not(.left) { bottom: calc(70px + var(--safe-bottom)); } }
 

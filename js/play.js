@@ -38,7 +38,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     $('#btn-next').addEventListener('click', function () {
       if (!S || UI.top() !== S.layer) return;
       // Alle Einheiten haben gehandelt? Dann heißt der Knopf „Ende“ und beendet die Runde
-      if (isHumanTurn() && S.mode === 'free' && !S.busy && !S.game.readyUnits(S.game.currentPlayer().slot).length) askEndTurn();
+      if (isHumanTurn() && S.mode === 'free' && !S.busy && !S.game.readyUnits(S.game.currentPlayer().slot).length) askEndTurn(true);
       else onAction('next');
     });
     $('#btn-eye').addEventListener('click', function () { if (S && UI.top() === S.layer) toggleVision(); });
@@ -503,9 +503,10 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     bn.disabled = modal || (!ready && !allDone) || (S.busy && !plan) || (S.mode !== 'free');
     bn.classList.toggle('hidden', !human && !plan);
     bn.classList.toggle('end', allDone);
-    var nl = bn.querySelector('.lbl'), ni = bn.querySelector('.ico');
+    var nl = bn.querySelector('.lbl'), ni = bn.querySelector('.ico'), nn = bn.querySelector('.num');
     if (nl) nl.textContent = allDone ? 'Ende' : 'Nächste';
     if (ni) ni.textContent = allDone ? '⏹' : '⏭';
+    if (nn) { nn.textContent = ready ? String(ready) : ''; nn.classList.toggle('hidden', !ready || allDone); }
     var be = $('#btn-eye'); if (be) be.classList.toggle('on', !!S.visionOn);
     var lbl = bp.querySelector('.lbl'), ico = bp.querySelector('.ico');
     var inMove = S.mode === 'move', inTarget = S.mode === 'target' || S.mode === 'unloadTile' || S.mode === 'pickTile';
@@ -758,7 +759,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
         if (ti >= 0 && ti !== S.targetIdx) { S.targetIdx = ti; UI.sfx('cursor'); focusTarget(); return; }
       }
       setCursor(t.x, t.y, !same);
-      onAction('a', { pointer: true, touch: d.type !== 'mouse' });
+      onAction('a', { pointer: true, touch: d.type !== 'mouse', same: same });
     });
     canvas.addEventListener('pointercancel', function (ev) {
       delete pointers[ev.pointerId];
@@ -803,6 +804,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     if (a === 'keys') { showKeysOverlay(); return true; }
     if (a === 'vision') { toggleVision(); return true; }
     if (a === 'danger') { toggleDanger(); return true; }
+    if (a === 'undo') { doUndo(); return true; }
     // Beschäftigt (Animation läuft): eigene Eingaben überspringen nur die Animation.
     // Ausnahme: Wer online auf den Gegner wartet, darf währenddessen weiter vorplanen.
     if (S.busy && !(canPlan() && (S.mode === 'free' || (S.mode === 'move' && S.sel && S.sel.plan)))) {
@@ -870,8 +872,8 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     if (u && visible) { inspectUnit(u); return true; }
     var t = g.terrainAt(S.cursor.x, S.cursor.y);
     if (t.builds && g.ownerAt(S.cursor.x, S.cursor.y) === cp.slot && !u) { openBuildMenu(S.cursor.x, S.cursor.y); return true; }
-    // Leeres Feld: per Tastatur öffnet Enter das Menü, ein Tipp/Klick setzt nur den Cursor (Menü über ☰ oder Esc)
-    if (!(ev && ev.pointer)) openMainMenu();
+    // Leeres Feld: Enter öffnet das Menü; ein Tipp setzt nur den Cursor, ein zweiter Tipp auf dasselbe Feld öffnet das Menü
+    if (!(ev && ev.pointer) || ev.same) openMainMenu();
     return true;
   }
   /** Cursor zum nächsten Eintrag einer Liste von Feldern (Lesereihenfolge), dir = 1 vorwärts, -1 rückwärts */
@@ -975,6 +977,25 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     S.visionOn = !S.visionOn;
     if (S.visionOn) { S.vision = computeEnemyVision(); UI.toast('Gegner-Sicht: an – gelb = dort sieht dich der Gegner'); } else UI.toast('Gegner-Sicht: aus');
     var be = $('#btn-eye'); if (be) be.classList.toggle('on', S.visionOn);
+  }
+  /** Letzten Zug zurücknehmen (einmal je Runde; Regeln siehe Game.canUndo) */
+  function doUndo() {
+    var g = S.game;
+    if (!isHumanTurn() || S.busy || S.mode !== 'free') { UI.sfx('error'); return; }
+    var slot = g.currentPlayer().slot, can = g.canUndo(slot);
+    if (!can.ok) { UI.sfx('error'); UI.toast('Rückgängig nicht möglich: ' + can.reason + '.', 3000); return; }
+    var r = g.undo(slot);
+    if (!r.ok) { UI.sfx('error'); return; }
+    netSend({ t: 'undo' });
+    S.anim = {}; S.sel = null; S.inspect = null;
+    rebuildTerrain();
+    var ev = r.events[0];
+    if (ev && ev.x != null) S.cursor = { x: ev.x, y: ev.y };
+    if (S.dangerOn) S.danger = computeDanger();
+    if (S.visionOn) S.vision = computeEnemyVision();
+    updateHud(true);
+    UI.sfx('cancel');
+    UI.toast('Letzter Zug zurückgenommen – einmal je Runde.');
   }
   function toggleDanger() {
     S.dangerOn = !S.dangerOn;
@@ -1654,6 +1675,8 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     var items = [];
     if (human) {
       items.push({ label: 'Runde beenden', value: 'end' });
+      var cu = g.canUndo(cp.slot);
+      items.push({ label: 'Zug rückgängig', sub: cu.ok ? '1× je Runde' : cu.reason.split(' (')[0], value: 'undo', disabled: !cu.ok });
       if (g.meta.powers !== false) {
         items.push({ label: co.power.name, sub: co.power.stars + '★', value: 'p1', disabled: !g.canActivate(cp.slot, 1) });
         items.push({ label: co.superPower.name, sub: co.superPower.stars + '★', value: 'p2', disabled: !g.canActivate(cp.slot, 2) });
@@ -1679,6 +1702,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       onSelect: function (it) {
         switch (it.value) {
           case 'end': askEndTurn(); break;
+          case 'undo': doUndo(); break;
           case 'p1': activatePower(1); break;
           case 'p2': activatePower(2); break;
           case 'co': showCoInfo(); break;
@@ -1903,12 +1927,13 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
   function showKeysOverlay() { modalPanel(h('div', { class: 'help keys', html: UI.keysHtml() })); }
 
   // ================================================================ Rundenwechsel
-  async function askEndTurn() {
+  /** Runde beenden; force = immer nachfragen (Knopf „Ende“ unten rechts), sonst nur bei bereiten Einheiten laut Einstellung */
+  async function askEndTurn(force) {
     var g = S.game;
     if (!isHumanTurn() || S.busy) return;
     var ready = g.readyUnits(g.currentPlayer().slot).length;
-    if (UI.settings.confirmEnd && ready > 0) {
-      var ok = await UI.confirm('Runde beenden? ' + ready + ' Einheit' + (ready === 1 ? '' : 'en') + ' noch bereit.', 'Beenden', 'Weiter');
+    if (force || (UI.settings.confirmEnd && ready > 0)) {
+      var ok = await UI.confirm(ready > 0 ? 'Runde beenden? ' + ready + ' Einheit' + (ready === 1 ? '' : 'en') + ' noch bereit.' : 'Runde beenden?', 'Beenden', 'Weiter');
       if (!ok) return;
     }
     await endTurnFlow(true);
@@ -2003,6 +2028,9 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       } else if (cmd.t === 'ai') {
         var ra = g.applyCmd(m.slot, cmd);
         if (ra.ok) UI.toast(g.playerBySlot(cmd.slot).name + ' wird jetzt von der KI gespielt.', 3500);
+      } else if (cmd.t === 'undo') {
+        var ru = g.applyCmd(m.slot, cmd);
+        if (ru.ok) { S.anim = {}; rebuildTerrain(); UI.toast(g.playerBySlot(m.slot).name + ' nimmt den letzten Zug zurück.', 2500); }
       } else if (cmd.t === 'resign') {
         var who = g.currentPlayer();
         var rev = g.resign(m.slot);
