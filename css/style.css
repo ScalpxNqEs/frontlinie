@@ -447,7 +447,7 @@ input, textarea { -webkit-user-select: text; user-select: text; }
   background: rgba(26, 31, 21, .92); border: 1px solid var(--khaki); border-left: 5px solid var(--amber); color: var(--cream); font-size: 13px; pointer-events: none; max-width: calc(100% - 300px); white-space: nowrap; overflow: hidden; z-index: 3; clip-path: var(--chamfer-s); }
 #plan-bar .who { font-family: var(--font-c); font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--amber); }
 #plan-bar .tip { opacity: .9; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 700px) { #plan-bar { top: auto; bottom: calc(72px + var(--safe-bottom)); left: 8px; transform: none; max-width: calc(100% - 150px); font-size: 12px; white-space: normal; } }
+@media (max-width: 700px) { #plan-bar { top: calc(88px + var(--safe-top)); bottom: auto; left: 8px; right: 8px; transform: none; max-width: none; font-size: 12px; white-space: normal; } }
 
 /* ---------- Einnahme deutlich ---------- */
 .hud-card .row.cap { color: #ff8a7a; font-weight: 700; }
