@@ -1032,14 +1032,14 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     for (var i = 0; i < path.length; i++) if (path[i].x === x && path[i].y === y) { inPath = i; break; }
     if (inPath >= 0) { sel.path = path.slice(0, inPath + 1); }
     else if (Math.abs(last.x - x) + Math.abs(last.y - y) === 1) {
-      var cost = pathCost(path) + g.moveCost(sel.unit.type, x, y);
+      var cost = pathCost(path) + g.moveCost(sel.unit.type, x, y, sel.unit.p);
       if (cost <= sel.budget) sel.path = path.concat([{ x: x, y: y }]);
       else sel.path = g.pathTo(sel.reach, x, y);
     } else sel.path = g.pathTo(sel.reach, x, y);
   }
   function pathCost(path) {
     var c = 0, g = S.game;
-    for (var i = 1; i < path.length; i++) c += g.moveCost(S.sel.unit.type, path[i].x, path[i].y);
+    for (var i = 1; i < path.length; i++) c += g.moveCost(S.sel.unit.type, path[i].x, path[i].y, S.sel.unit.p);
     return c;
   }
   function moveAction(a, ev) {
@@ -1761,6 +1761,15 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       { power: true, portrait: R.portraitCanvas(ev.co, pl.faction, null, ev.co2 || pl.co2) });
     // Sofort-Effekte sichtbar machen
     S.game.units.forEach(function (u) { if (u.p === ev.slot || S.game.isEnemy(u.p, ev.slot)) R.addFx({ type: 'sparkle', x: u.x, y: u.y, dur: 600 }); });
+    if (ev.weather) {
+      // Wetter-Kraft: neues Wetter ankündigen; Regen/Nacht schalten Nebel ein → Sicht und Gelände neu aufbauen
+      var Wn = G.WEATHER[ev.weather];
+      UI.sfx('menu');
+      await UI.banner(Wn.icon + ' ' + Wn.name + ' – 2 Tage', Wn.desc, ev.weather === 'nacht' ? '#283068' : ev.weather === 'schnee' ? '#8098c0' : ev.weather === 'regen' ? '#406080' : '#e0b020', isAiTurn() ? 900 : 1400);
+      rebuildTerrain();
+    }
+    if (S.dangerOn) S.danger = computeDanger();
+    if (S.visionOn) S.vision = computeEnemyVision();
   }
   function openBuildMenu(x, y) {
     var g = S.game, cp = g.currentPlayer();

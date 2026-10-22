@@ -163,4 +163,26 @@ test('Laufzeit: 30x20 mit 40 Einheiten', () => {
   assert.ok(tot / calls < 50, 'Ø ' + tot / calls);
 });
 
+test('Geld- und Wetter-Kommandanten: KI setzt die Kräfte ein, Wetter wechselt, Befehle gültig', () => {
+  [['nora', 'frida'], ['tilda', 'kraehe']].forEach(([a, b]) => {
+    const g = G.Game.create({ map: mapById('t-land'), seed: 3, meta: { weatherMode: 'klar' }, players: [
+      { slot: 1, faction: 'green', co: a, ai: true, aiLevel: 'schwer' }, { slot: 2, faction: 'blue', co: b, ai: true, aiLevel: 'schwer' }] });
+    const used = [];
+    let bad = 0;
+    const invalid = play(g, 30, 'schwer', (g, slot, cmd) => {
+      if (cmd.kind !== 'power') return true;
+      const funds = g.playerBySlot(slot).funds;
+      if (!g.activatePower(slot, cmd.level)) { bad++; return false; }
+      used.push({ co: g.playerBySlot(slot).co, weather: g.weather, paid: g.playerBySlot(slot).funds - funds });
+      return false; // schon ausgeführt
+    });
+    assert.strictEqual(invalid + bad, 0, a + '/' + b + ': ungültige Befehle');
+    const own = used.filter(u => u.co === a);
+    assert.ok(own.length > 0, a + ' setzt keine Kraft ein');
+    if (a === 'nora') assert.ok(own.every(u => u.weather === 'regen'), 'Noras Kraft bringt Regen');
+    if (a === 'tilda') assert.ok(own.every(u => u.paid > 0), 'Tildas Kraft zahlt aus');
+    used.filter(u => u.co === 'frida').forEach(u => assert.strictEqual(u.weather, 'schnee'));
+  });
+});
+
 console.log(`\n${passed} KI-Tests bestanden`);

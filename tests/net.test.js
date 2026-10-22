@@ -152,32 +152,32 @@ async function main() {
     ok(seatCo.ok, 'Mitspieler wählt Kommandant');
     // Fusion über die 'seat'-Aktion
     const seatUrl = 'api/rooms/' + host.code + '/seat';
-    const seatCo2 = await api(seatUrl, { token: guest.token, co2: 'ole' });
+    const seatCo2 = await api(seatUrl, { token: guest.token, co2: 'frida' });
     let lob = await api('api/rooms/' + host.code);
-    ok(seatCo2.ok && lob.seats[1].co2 === 'ole', 'Mitspieler wählt Fusionspartner (co2)');
+    ok(seatCo2.ok && lob.seats[1].co2 === 'frida', 'Mitspieler wählt Fusionspartner (co2)');
     await api(seatUrl, { token: guest.token, co2: 'jara' });
     lob = await api('api/rooms/' + host.code);
-    ok(lob.seats[1].co2 === 'ole', 'Partner gleich dem Haupt-CO wird ignoriert');
+    ok(lob.seats[1].co2 === 'frida', 'Partner gleich dem Haupt-CO wird ignoriert');
     await api(seatUrl, { token: guest.token, co2: 'nix' });
     lob = await api('api/rooms/' + host.code);
-    ok(lob.seats[1].co2 === 'ole', 'Unbekannter Partner wird ignoriert');
-    await api(seatUrl, { token: guest.token, co: 'ole' });
+    ok(lob.seats[1].co2 === 'frida', 'Unbekannter Partner wird ignoriert');
+    await api(seatUrl, { token: guest.token, co: 'frida' });
     lob = await api('api/rooms/' + host.code);
-    ok(lob.seats[1].co === 'ole' && lob.seats[1].co2 === null, 'Haupt-CO gleich dem Partner löst die Fusion auf');
-    await api(seatUrl, { token: guest.token, co: 'jara', co2: 'ole' });
+    ok(lob.seats[1].co === 'frida' && lob.seats[1].co2 === null, 'Haupt-CO gleich dem Partner löst die Fusion auf');
+    await api(seatUrl, { token: guest.token, co: 'jara', co2: 'frida' });
     lob = await api('api/rooms/' + host.code);
-    ok(lob.seats[1].co === 'jara' && lob.seats[1].co2 === 'ole', 'co und co2 gemeinsam setzen');
+    ok(lob.seats[1].co === 'jara' && lob.seats[1].co2 === 'frida', 'co und co2 gemeinsam setzen');
     await api(seatUrl, { token: guest.token, co2: '' });
     lob = await api('api/rooms/' + host.code);
     ok(lob.seats[1].co2 === null, 'co2: "" entfernt den Partner');
-    await api(seatUrl, { token: guest.token, co2: 'ole' });
+    await api(seatUrl, { token: guest.token, co2: 'frida' });
     await api(seatUrl, { token: guest.token, co2: null });
     lob = await api('api/rooms/' + host.code);
     ok(lob.seats[1].co2 === null, 'co2: null entfernt den Partner');
-    await api(seatUrl, { token: guest.token, co2: 'ole' });
+    await api(seatUrl, { token: guest.token, co2: 'frida' });
     await api(seatUrl, { token: guest.token, name: 'Handy' });
     lob = await api('api/rooms/' + host.code);
-    ok(lob.seats[1].co2 === 'ole', 'Body ohne co2 lässt den Partner unverändert');
+    ok(lob.seats[1].co2 === 'frida', 'Body ohne co2 lässt den Partner unverändert');
 
     const A = makeClient('A', host.code, host.token, 1), B = makeClient('B', host.code, guest.token, 2);
     A.s = stream(host.code, host.token); B.s = stream(host.code, guest.token);
@@ -191,7 +191,7 @@ async function main() {
     }
     ok(A.game.stateHash() === B.game.stateHash(), 'Beide Browser starten mit identischem Zustand');
     ok(A.game.playerBySlot(2).co === 'jara' && A.game.playerBySlot(2).name === 'Handy', 'Gewählter Kommandant und Name übernommen');
-    ok(A.game.playerBySlot(2).co2 === 'ole' && A.game.coOf(2).fused && A.game.coOf(2).name === 'Jara & Ole', 'Fusion des Mitspielers im gestarteten Spiel');
+    ok(A.game.playerBySlot(2).co2 === 'frida' && A.game.coOf(2).fused && A.game.coOf(2).name === 'Jara & Frida', 'Fusion des Mitspielers im gestarteten Spiel');
     ok(A.game.playerBySlot(1).co2 === 'mira' && B.game.coOf(1) === G.fuseCOs('rika', 'mira'), 'Fusion des Gastgebers im gestarteten Spiel');
 
     const wrong = await api('api/rooms/' + host.code + '/cmd', { token: guest.token, gameNo: 1, base: 0, cid: 'x', cmd: { t: 'end' } });

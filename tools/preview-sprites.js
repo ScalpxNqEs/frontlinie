@@ -59,7 +59,7 @@ y0 += 74;
 Object.keys(S.icons).forEach((id, n) => draw(S.icons[id], 10 + n * 74, y0, FACTIONS.neutral, [96, 96, 112]));
 // Porträts
 y0 += 74;
-const fac = { rika: 'red', bastian: 'blue', jara: 'green', viktor: 'yellow', fortuna: 'yellow', mira: 'red', ole: 'blue', kurt: 'red', greta: 'green', kraehe: 'yellow' };
+const fac = { rika: 'red', bastian: 'blue', jara: 'green', viktor: 'yellow', tilda: 'yellow', mira: 'red', frida: 'blue', kurt: 'red', nora: 'green', kraehe: 'yellow' };
 Object.keys(S.portraits).forEach((id, n) => {
   const x = 10 + (n % 5) * 270, y = y0 + Math.floor(n / 5) * 138;
   draw(S.portraits[id], x, y, team, panel);

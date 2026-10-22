@@ -307,6 +307,12 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     var co = this.coOf(slot);
     return Math.round(G.UNITS[type].cost * (co && co.cost ? co.cost(type) : 1));
   };
+  /** Tageseinkommen: Gebäude × Einkommen je Gebäude × CO-Faktor (Hook income) */
+  Game.prototype.incomeOf = function (slot) {
+    var co = this.coOf(slot);
+    var base = this.propertiesOf(slot).length * (this.meta.income || G.RULES.income);
+    return Math.round(base * (co && co.income ? co.income(this.powerOf(slot)) : 1));
+  };
   Game.prototype.piercing = function (slot) {
     var co = this.coOf(slot);
     return !!(co && co.piercing && co.piercing(this.powerOf(slot)));
@@ -409,16 +415,19 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
   };
 
   // --------------------------------------------------------------- Bewegung
-  Game.prototype.moveCost = function (type, x, y) {
-    return this.moveCostMt(G.UNITS[type].mt, x, y);
+  Game.prototype.moveCost = function (type, x, y, slot) {
+    return this.moveCostMt(G.UNITS[type].mt, x, y, slot);
   };
-  /** Bewegungskosten je Bewegungsart inkl. Wetter (0 = unpassierbar) */
-  Game.prototype.moveCostMt = function (mt, x, y) {
+  /** Bewegungskosten je Bewegungsart inkl. Wetter (0 = unpassierbar). slot (optional): Besitzer – CO-Hook weatherImmune hebt den Wetter-Nachteil auf */
+  Game.prototype.moveCostMt = function (mt, x, y, slot) {
     if (!this.inBounds(x, y)) return 0;
     var t = this.map.terrain[y][x], c = G.TERRAIN[t].move[mt] || 0;
     if (!c) return 0;
     var W = G.WEATHER[this.weather];
-    return W && W.extra ? c + W.extra(mt, t) : c;
+    if (!W || !W.extra) return c;
+    var co = slot != null ? this.coOf(slot) : null;
+    if (co && co.weatherImmune && co.weatherImmune(this.weather, this.powerOf(slot))) return c;
+    return c + W.extra(mt, t);
   };
   /** Nebel ist aktiv bei Nebel-Einstellung oder Wetter mit Sichtbehinderung (Regen, Nacht) */
   Game.prototype.fogActive = function () {
@@ -428,6 +437,8 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
   /** Würfelt das Wetter für den neuen Tag (deterministisch über den Spiel-Zufall) */
   Game.prototype.rollWeather = function (first) {
     var mode = this.weatherMode || 'klar', w = 'klar';
+    // weatherLeft > 0: Wetter bleibt (wechselhaft gewürfelt oder per CO-Kraft gesetzt – dann in jedem Modus)
+    if (!first && this.weatherLeft > 0) { this.weatherLeft--; return; }
     if (mode === 'auto') mode = 'wechselhaft';
     if (mode === 'klar' || mode === 'regen' || mode === 'schnee' || mode === 'nacht') w = mode;
     else if (mode === 'tagnacht') w = this.day % 3 === 0 ? 'nacht' : 'klar';
@@ -469,7 +480,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       for (var d = 0; d < 4; d++) {
         var nx = cn.x + DIRS[d][0], ny = cn.y + DIRS[d][1];
         if (nx < 0 || ny < 0 || nx >= w || ny >= this.map.h) continue;
-        var c = this.moveCost(u.type, nx, ny);
+        var c = this.moveCost(u.type, nx, ny, u.p);
         if (!c) continue;
         var nc = cn.cost + c;
         if (nc > budget) continue;
@@ -508,11 +519,11 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
         while (out.length > 1) {
           var e = out[out.length - 1], o2 = this.unitAt(e.x, e.y);
           if (!o2 || o2 === u) break;
-          out.pop(); fuel -= this.moveCost(u.type, e.x, e.y);
+          out.pop(); fuel -= this.moveCost(u.type, e.x, e.y, u.p);
         }
         return { path: out, trapped: true, fuel: fuel, blocker: occ };
       }
-      fuel += this.moveCost(u.type, path[i].x, path[i].y);
+      fuel += this.moveCost(u.type, path[i].x, path[i].y, u.p);
       out.push(path[i]);
     }
     return { path: out, trapped: false, fuel: fuel };
@@ -632,7 +643,9 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     pl.powerUses++;
     // co = Haupt-Kommandant, co2 = Fusionspartner (oder null); name stammt vom (ggf. fusionierten) CO
     var ev = { type: 'power', slot: slot, level: level, co: pl.co, co2: pl.co2 || null, name: level === 2 ? co.superPower.name : co.power.name };
+    var w0 = this.weather;
     if (co.onPower) co.onPower(this, slot, level);
+    if (this.weather !== w0) ev.weather = this.weather;   // Wetter-Kraft: Anzeige soll den Umschwung zeigen
     this.touch();
     return ev;
   };
@@ -798,7 +811,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     var cost = 0;
     for (var i = 1; i < path.length; i++) {
       var dd = Math.abs(path[i].x - path[i - 1].x) + Math.abs(path[i].y - path[i - 1].y);
-      var c = this.moveCost(u.type, path[i].x, path[i].y);
+      var c = this.moveCost(u.type, path[i].x, path[i].y, u.p);
       if (dd !== 1 || !c) return { ok: false, error: 'bad path', events: [] };
       cost += c;
     }
@@ -1032,7 +1045,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       });
     }
     // Einkommen
-    var income = this.propertiesOf(pl.slot).length * (this.meta.income || G.RULES.income);
+    var income = this.incomeOf(pl.slot);
     pl.funds += income;
     events.push({ type: 'income', slot: pl.slot, amount: income });
     // Reparatur & Nachschub auf Gebäuden

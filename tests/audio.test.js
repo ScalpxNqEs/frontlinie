@@ -16,7 +16,7 @@ function test(name, fn) {
   catch (e) { console.log('FAIL  ' + name + '\n      ' + e.message); process.exitCode = 1; }
 }
 
-const COS = ['rika', 'bastian', 'jara', 'viktor', 'fortuna', 'mira', 'ole', 'kurt', 'greta', 'kraehe'];
+const COS = ['rika', 'bastian', 'jara', 'viktor', 'tilda', 'mira', 'frida', 'kurt', 'nora', 'kraehe'];
 const TRACKS = ['title', 'menu', 'map_editor', 'power', 'victory', 'defeat', 'briefing'].concat(COS.map(c => 'co_' + c));
 const SFX = ['cursor', 'select', 'cancel', 'menu', 'confirm', 'error', 'move_foot', 'move_tread', 'move_tire', 'move_air',
   'move_ship', 'shot_mg', 'shot_cannon', 'shot_artillery', 'shot_rocket', 'shot_aa', 'explosion', 'hit', 'capture_tick',

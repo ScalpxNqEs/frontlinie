@@ -270,22 +270,38 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
   Object.keys(VISION).forEach(function (k) { if (G.UNITS[k]) G.UNITS[k].vision = VISION[k]; });
 
   // ---------------------------------------------------------------- Kommandanten (COs)
-  // Hooks (alle optional), jeweils mit (game, unit, ctx) – power: 0 = normal, 1 = Kraft, 2 = Superkraft
-  //   atk(type, target, power) -> Prozent-Bonus (additiv, 0 = neutral)
-  //   def(type, attacker, power) -> Prozent-Bonus
+  // Hooks (alle optional) – power: 0 = normal, 1 = Kraft, 2 = Superkraft; game = laufendes Spiel (kann fehlen)
+  //   atk(type, target, power, game) -> Prozent-Bonus (additiv, 0 = neutral)
+  //   def(type, attacker, power, game) -> Prozent-Bonus
   //   move(type, power) -> zusätzliche Bewegung
   //   range(type, power) -> zusätzliche Max-Reichweite (nur indirekt)
   //   vision(type, power) -> zusätzliche Sicht
   //   luck(power) -> [min,max] Glück (Standard [0,9])
   //   cost(type) -> Kostenfaktor (1 = normal)
   //   capture(power) -> Faktor für Einnahme
-  //   onPower(game, player, level) -> Sofort-Effekt
+  //   piercing(power) -> true: Verstecke im Nebel werden aufgedeckt
+  //   income(power) -> Faktor für das Tageseinkommen (1 = normal)
+  //   weatherImmune(weather, power) -> true: eigene Einheiten ohne Bewegungsnachteil durch dieses Wetter
+  //   onPower(game, slot, level) -> Sofort-Effekt
+  // Kraft-Texte nennen, was zum Tagesbonus hinzukommt; jede aktive Kraft gibt außerdem G.RULES.powerAtk/powerDef.
+  // Balance: Sterne ≈ Wirkung (grobe Schranke im Kern-Test „Statische Balance-Schranke“); die Werte sind per
+  // KI-gegen-KI-Messung abgestimmt (tools/co-balance.js, Ziel: jede Siegquote 40–60 %). Erfahrung daraus: Boni, die
+  // nur einen kleinen Teil der Armee betreffen (Artillerie ~10 %, Fußtruppen ~10 % des Werts), tragen wenig – solche
+  // Spezialisten brauchen Kräfte mit Breitenwirkung (Reparatur, Einnahme); Schaden an allen Gegnern wirkt sehr stark.
   function isDirect(t) { var u = G.UNITS[t]; return u.range[1] === 1 && u.range[0] <= 1 && (G.DAMAGE[t].primary || G.DAMAGE[t].secondary); }
   function isIndirect(t) { return G.UNITS[t].range[0] > 1; }
   function isAir(t) { var c = G.UNITS[t].cls; return c === 'copter' || c === 'plane'; }
   function isSea(t) { return G.UNITS[t].domain === 'sea'; }
   function isFoot(t) { return G.UNITS[t].cls === 'foot'; }
   G.unitIsDirect = isDirect; G.unitIsIndirect = isIndirect; G.unitIsAir = isAir; G.unitIsSea = isSea; G.unitIsFoot = isFoot;
+  /** Wetter-Kraft: Wetter w heute und an den folgenden (days − 1) Tagen; Game.rollWeather lässt es so lange stehen */
+  function forceWeather(g, w, days) { g.weather = w; g.weatherLeft = Math.max(0, (days || 2) - 1); }
+  /** Tageseinkommen eines Spielers ohne CO-Faktor (für Sofort-Auszahlungen) */
+  function baseIncome(g, slot) { return g.propertiesOf(slot).length * ((g.meta && g.meta.income) || G.RULES.income); }
+  /** Repariert alle eigenen Maschinen (alles außer Fußtruppen) um amount interne KP */
+  function repairMachines(g, slot, amount) {
+    g.units.forEach(function (u) { if (u.p === slot && !isFoot(u.type)) u.hp = Math.min(100, u.hp + amount); });
+  }
 
   G.COS = {
     rika: {
@@ -300,98 +316,111 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     bastian: {
       id: 'bastian', name: 'Bastian Kell', faction: 'blue',
       bio: 'Panzerkommandant von Azur. Liebt den Nahkampf und hält Artillerie für Feigheit.',
-      d2d: 'Direkte Angreifer +20 % Angriff, indirekte −10 %.',
-      power: { name: 'Vollgas', stars: 3, desc: 'Direkte Angreifer +1 Bewegung, Angriff weiter erhöht.' },
-      superPower: { name: 'Stahlgewitter', stars: 6, desc: 'Direkte Angreifer +2 Bewegung und massiv verstärkter Angriff.' },
-      atk: function (t, tg, p) { if (isDirect(t)) return 20 + (p === 1 ? 20 : p === 2 ? 40 : 0); if (isIndirect(t)) return -10; return 0; },
+      d2d: 'Direkte Angreifer +5 % Angriff, indirekte −10 %.',
+      power: { name: 'Vollgas', stars: 3, desc: 'Direkte Angreifer +1 Bewegung und +15 % Angriff.' },
+      superPower: { name: 'Stahlgewitter', stars: 6, desc: 'Direkte Angreifer +2 Bewegung und +30 % Angriff.' },
+      atk: function (t, tg, p) { if (isDirect(t)) return 5 + (p === 1 ? 15 : p === 2 ? 30 : 0); if (isIndirect(t)) return -10; return 0; },
       move: function (t, p) { return isDirect(t) ? p : 0; }
     },
     jara: {
       id: 'jara', name: 'Jara Moos', faction: 'green',
-      bio: 'Ingenieurin aus Smaragd. Berechnet jede Flugbahn bis auf die dritte Nachkommastelle.',
-      d2d: 'Indirekte Einheiten +20 % Angriff, direkte −10 %.',
-      power: { name: 'Weitblick', stars: 3, desc: 'Indirekte Einheiten +1 Reichweite und +10 % Angriff.' },
-      superPower: { name: 'Trommelfeuer', stars: 6, desc: 'Indirekte Einheiten +2 Reichweite und +30 % Angriff.' },
-      atk: function (t, tg, p) { if (isIndirect(t)) return 20 + (p === 1 ? 10 : p === 2 ? 30 : 0); if (isDirect(t)) return -10; return 0; },
-      range: function (t, p) { return isIndirect(t) ? p : 0; }
+      bio: 'Ingenieurin aus Smaragd. Berechnet jede Flugbahn bis auf die dritte Nachkommastelle – und repariert nebenbei alles mit Motor.',
+      d2d: 'Indirekte Einheiten +1 Reichweite und +10 % Angriff.',
+      power: { name: 'Feldwerkstatt', stars: 3, desc: 'Fahrzeuge, Flieger und Schiffe erhalten 2 KP zurück; indirekte Einheiten +1 weitere Reichweite und +10 % Angriff.' },
+      superPower: { name: 'Trommelfeuer', stars: 6, desc: 'Fahrzeuge, Flieger und Schiffe erhalten 4 KP zurück; indirekte Einheiten +2 weitere Reichweite und +30 % Angriff.' },
+      atk: function (t, tg, p) { return isIndirect(t) ? 10 + (p === 1 ? 10 : p === 2 ? 30 : 0) : 0; },
+      range: function (t, p) { return isIndirect(t) ? 1 + p : 0; },
+      onPower: function (g, pl, lvl) { repairMachines(g, pl, lvl === 2 ? 40 : 20); }
     },
     viktor: {
       id: 'viktor', name: 'Viktor Stahl', faction: 'yellow',
       bio: 'Altgedienter General aus Bernstein. Hat noch nie eine Stellung freiwillig geräumt.',
-      d2d: 'Alle Einheiten +20 % Verteidigung, aber −1 Bewegung für Fahrzeuge.',
-      power: { name: 'Bollwerk', stars: 3, desc: 'Verteidigung weiter erhöht, Fahrzeuge wieder voll beweglich.' },
-      superPower: { name: 'Festung', stars: 7, desc: 'Gewaltige Verteidigung und +20 % Angriff.' },
-      def: function (t, at, p) { return 20 + (p === 1 ? 30 : p === 2 ? 60 : 0); },
+      d2d: 'Alle Einheiten +15 % Verteidigung, aber −1 Bewegung für Fahrzeuge.',
+      power: { name: 'Bollwerk', stars: 3, desc: 'Verteidigung +25 %, Fahrzeuge wieder voll beweglich.' },
+      superPower: { name: 'Festung', stars: 7, desc: 'Verteidigung +45 % und Angriff +20 %, Fahrzeuge wieder voll beweglich.' },
+      def: function (t, at, p) { return 15 + (p === 1 ? 25 : p === 2 ? 45 : 0); },
       atk: function (t, tg, p) { return p === 2 ? 20 : 0; },
       move: function (t, p) { return (G.UNITS[t].cls === 'vehicle' && p === 0) ? -1 : 0; }
     },
-    fortuna: {
-      id: 'fortuna', name: 'Fortuna Lenz', faction: 'yellow',
-      bio: 'Söldnerin und Spielerin. Setzt alles auf eine Karte – und gewinnt erstaunlich oft.',
-      d2d: 'Höheres Glück: Schaden schwankt stärker nach oben.',
-      power: { name: 'Glückssträhne', stars: 3, desc: 'Glück steigt stark an.' },
-      superPower: { name: 'Jackpot', stars: 6, desc: 'Gewaltiges Glück – jeder Treffer kann vernichtend sein.' },
-      luck: function (p) { return p === 2 ? [0, 69] : p === 1 ? [0, 39] : [0, 19]; }
+    tilda: {
+      id: 'tilda', name: 'Tilda Taler', faction: 'yellow',
+      bio: 'Söldnerin und Geschäftsfrau aus Bernstein. Kämpft für den, der am besten zahlt – und rechnet jeden Schuss ab.',
+      d2d: 'Einkommen +10 %. Ihre Truppen selbst kämpfen ohne Bonus.',
+      power: { name: 'Kapitalspritze', stars: 3, desc: 'Sofort-Auszahlung: 30 % eines Tageseinkommens.' },
+      superPower: { name: 'Goldregen', stars: 6, desc: 'Sofort-Auszahlung: 60 % eines Tageseinkommens.' },
+      income: function (p) { return 1.1; },
+      onPower: function (g, pl, lvl) {
+        var p = g.playerBySlot(pl);
+        if (p) p.funds += Math.round(baseIncome(g, pl) * (lvl === 2 ? 0.6 : 0.3));
+      }
     },
     mira: {
       id: 'mira', name: 'Mira Wolke', faction: 'red',
       bio: 'Fliegerass der Karmesin-Luftwaffe. Fühlt sich am Boden fremd.',
       d2d: 'Luftfahrzeuge +20 % Angriff, Schiffe −10 %. Luftfahrzeuge kosten 10 % weniger.',
       power: { name: 'Steigflug', stars: 3, desc: 'Luftfahrzeuge +2 Bewegung und +10 % Angriff.' },
-      superPower: { name: 'Sturmfront', stars: 7, desc: 'Luftfahrzeuge +2 Bewegung, +30 % Angriff; alle Gegner verlieren 1 KP.' },
+      superPower: { name: 'Sturmfront', stars: 6, desc: 'Luftfahrzeuge +2 Bewegung, +30 % Angriff; alle Gegner verlieren 1 KP.' },
       atk: function (t, tg, p) { if (isAir(t)) return 20 + (p === 1 ? 10 : p === 2 ? 30 : 0); if (isSea(t)) return -10; return 0; },
       move: function (t, p) { return isAir(t) && p ? 2 : 0; },
       cost: function (t) { return isAir(t) ? 0.9 : 1; },
       onPower: function (g, pl, lvl) { if (lvl === 2) g.damageEnemies(pl, 10); }
     },
-    ole: {
-      id: 'ole', name: 'Ole Gischt', faction: 'blue',
-      bio: 'Kapitän der Azur-Flotte. Hat mehr Salz im Bart als andere im Meer.',
-      d2d: 'Schiffe +20 % Angriff und +1 Bewegung. Bodeneinheiten −10 %.',
-      power: { name: 'Springflut', stars: 3, desc: 'Schiffe +1 Bewegung und +20 % Angriff.' },
-      superPower: { name: 'Sturmflut', stars: 6, desc: 'Alle Gegner verlieren 2 KP, Schiffe +30 % Angriff.' },
-      atk: function (t, tg, p) { if (isSea(t)) return 20 + (p === 1 ? 20 : p === 2 ? 30 : 0); if (G.UNITS[t].domain === 'ground') return -10; return 0; },
-      move: function (t, p) { return isSea(t) ? 1 + (p === 1 ? 1 : 0) : 0; },
-      onPower: function (g, pl, lvl) { if (lvl === 2) g.damageEnemies(pl, 20); }
+    frida: {
+      id: 'frida', name: 'Frida Frost', faction: 'blue',
+      bio: 'Admiralin der Azur-Eismeerflotte. Je kälter der Wind, desto wärmer ihr Lächeln.',
+      d2d: 'Bei Schnee +5 % Angriff und keine Bewegungsnachteile durch Schnee.',
+      power: { name: 'Kälteeinbruch', stars: 5, desc: 'Es schneit heute und morgen.' },
+      superPower: { name: 'Schneesturm', stars: 9, desc: 'Es schneit heute und morgen, Angriff bei Schnee +20 % statt +5 %.' },
+      atk: function (t, tg, p, g) { return g && g.weather === 'schnee' ? (p === 2 ? 20 : 5) : 0; },
+      weatherImmune: function (w) { return w === 'schnee'; },
+      onPower: function (g, pl, lvl) { forceWeather(g, 'schnee', 2); }
     },
     kurt: {
       id: 'kurt', name: 'Kurt Kies', faction: 'red',
       bio: 'Junger Infanterist aus Karmesin. Begeisterter Marschierer, schlechter Sänger.',
-      d2d: 'Fußtruppen +20 % Angriff und nehmen schneller ein. Andere Einheiten −10 %.',
-      power: { name: 'Gewaltmarsch', stars: 3, desc: 'Fußtruppen +2 Bewegung.' },
-      superPower: { name: 'Massenaufgebot', stars: 6, desc: 'Fußtruppen +2 Bewegung, +40 % Angriff, Einnahme verdoppelt.' },
-      atk: function (t, tg, p) { if (isFoot(t)) return 20 + (p === 2 ? 40 : 0); return -10; },
+      d2d: 'Fußtruppen +20 % Angriff und nehmen schneller ein.',
+      power: { name: 'Gewaltmarsch', stars: 3, desc: 'Fußtruppen +2 Bewegung, +30 % Angriff, Einnahme verdoppelt.' },
+      superPower: { name: 'Massenaufgebot', stars: 6, desc: 'Fußtruppen +2 Bewegung, +50 % Angriff, Einnahme verdoppelt.' },
+      atk: function (t, tg, p) { return isFoot(t) ? 20 + (p === 1 ? 30 : p === 2 ? 50 : 0) : 0; },
       move: function (t, p) { return isFoot(t) && p ? 2 : 0; },
-      capture: function (p) { return p === 2 ? 2 : 1.5; }
+      capture: function (p) { return p ? 2 : 1.5; }
     },
-    greta: {
-      id: 'greta', name: 'Greta Funk', faction: 'green',
-      bio: 'Aufklärerin aus Smaragd. Weiß meist schon vorher, was du vorhast.',
-      d2d: 'Alle Einheiten +1 Sicht. Im Nebel +15 % Angriff.',
-      power: { name: 'Lauschangriff', stars: 3, desc: '+2 Sicht, Verstecke werden aufgedeckt, +10 % Angriff.' },
-      superPower: { name: 'Lagekarte', stars: 5, desc: '+3 Sicht, Verstecke aufgedeckt, +25 % Angriff.' },
-      vision: function (t, p) { return 1 + (p === 1 ? 2 : p === 2 ? 3 : 0); },
-      atk: function (t, tg, p, g) { return (g && (g.fogActive ? g.fogActive() : g.fog) ? 15 : 0) + (p === 1 ? 10 : p === 2 ? 25 : 0); },
-      piercing: function (p) { return p > 0; }
+    nora: {
+      id: 'nora', name: 'Nora Niesel', faction: 'green',
+      bio: 'Wetterkundlerin aus Smaragd. Riecht den Regen drei Tage im Voraus – und bestellt ihn notfalls selbst.',
+      d2d: 'Bei Regen +10 % Angriff, +5 % Verteidigung und keine Bewegungsnachteile durch Regen.',
+      power: { name: 'Landregen', stars: 3, desc: 'Es regnet heute und morgen, Angriff bei Regen +15 % statt +10 %.' },
+      superPower: { name: 'Wolkenbruch', stars: 6, desc: 'Es regnet heute und morgen, bei Regen Angriff +30 % statt +10 % und Verteidigung +15 % statt +5 %.' },
+      atk: function (t, tg, p, g) { return g && g.weather === 'regen' ? (p === 2 ? 30 : p === 1 ? 15 : 10) : 0; },
+      def: function (t, at, p, g) { return g && g.weather === 'regen' ? (p === 2 ? 15 : 5) : 0; },
+      weatherImmune: function (w) { return w === 'regen'; },
+      onPower: function (g, pl, lvl) { forceWeather(g, 'regen', 2); }
     },
     kraehe: {
       id: 'kraehe', name: 'Marschall Krähe', faction: 'yellow',
       bio: 'Ein Stratege ohne Heimat, der Länder gegeneinander ausspielt. Sammelt Orden – und Gebiete.',
-      d2d: 'Alle Einheiten +10 % Angriff und Verteidigung.',
-      power: { name: 'Schwarzer Flügel', stars: 4, desc: 'Alle Gegner verlieren 1 KP, eigener Angriff +10 %.' },
-      superPower: { name: 'Krähenschwarm', stars: 8, desc: 'Alle Gegner verlieren 3 KP, eigener Angriff +20 %.' },
-      atk: function (t, tg, p) { return 10 + (p === 1 ? 10 : p === 2 ? 20 : 0); },
-      def: function () { return 10; },
-      onPower: function (g, pl, lvl) { g.damageEnemies(pl, lvl === 2 ? 30 : 10); }
+      d2d: 'Truppen aus Überläufern: alle Einheiten −5 % Verteidigung. Krähe zermürbt den Gegner mit seinen Kräften.',
+      power: { name: 'Schwarzer Flügel', stars: 6, desc: 'Alle Gegner verlieren 1 KP.' },
+      superPower: { name: 'Krähenschwarm', stars: 10, desc: 'Alle Gegner verlieren 2 KP, eigener Angriff +10 %.' },
+      atk: function (t, tg, p) { return p === 2 ? 10 : 0; },
+      def: function () { return -5; },
+      onPower: function (g, pl, lvl) { g.damageEnemies(pl, lvl === 2 ? 20 : 10); }
     }
   };
-  G.CO_ORDER = ['rika', 'bastian', 'jara', 'viktor', 'fortuna', 'mira', 'ole', 'kurt', 'greta', 'kraehe'];
+  // höchstens 10 Kommandanten; Reihenfolge = Auswahl in den Menüs (je Fraktion gemischt)
+  G.CO_ORDER = ['rika', 'bastian', 'jara', 'viktor', 'tilda', 'mira', 'frida', 'kurt', 'nora', 'kraehe'];
+  // Ältere Spielstände: entfernte Kommandanten verweisen auf ihre Nachfolger – nicht aufzählbar,
+  // erscheinen also in keiner Auswahl, Liste oder Prüfsumme (Fortuna → Tilda, Ole → Frida, Greta → Nora)
+  [['fortuna', 'tilda'], ['ole', 'frida'], ['greta', 'nora']].forEach(function (p) {
+    Object.defineProperty(G.COS, p[0], { value: G.COS[p[1]], enumerable: false });
+  });
 
   // ---- Fusion: zwei Kommandanten führen eine Armee gemeinsam.
   // Das fusionierte Objekt sieht aus wie ein einzelner CO (gleiche Felder, gleiche Hook-Signaturen) und wird
   // je Paar genau einmal gebaut (stabile Identität). Angriff/Verteidigung: 70 % der Summe (auch Abzüge),
-  // Bewegung/Reichweite/Sicht: Summe, Glück: weiteste Spanne, Kosten: Produkt, Einnahme: Maximum,
-  // Durchblick: einer genügt, Sofort-Effekte: beide. Hooks gibt es nur, wenn mindestens ein Partner sie hat.
+  // Einkommen: 70 % der Summe der Zuschläge, Bewegung/Reichweite/Sicht: Summe, Glück: weiteste Spanne,
+  // Kosten: Produkt, Einnahme: Maximum, Durchblick und Wetterfestigkeit: einer genügt, Sofort-Effekte: beide
+  // (bei zwei Wetter-Kräften gilt das Wetter des zweiten). Hooks gibt es nur, wenn mindestens ein Partner sie hat.
   var fuseCache = {};
   function firstName(co) { return co.name.split(' ')[0]; }
   G.fuseCOs = function (aId, bId) {
@@ -434,6 +463,12 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     if (a.cost || b.cost) f.cost = function (t) { return (a.cost ? a.cost(t) : 1) * (b.cost ? b.cost(t) : 1); };
     if (a.capture || b.capture) f.capture = function (p) { return Math.max(a.capture ? a.capture(p) : 1, b.capture ? b.capture(p) : 1); };
     if (a.piercing || b.piercing) f.piercing = function (p) { return !!((a.piercing && a.piercing(p)) || (b.piercing && b.piercing(p))); };
+    if (a.income || b.income) f.income = function (p) {
+      return 1 + 0.7 * ((a.income ? a.income(p) - 1 : 0) + (b.income ? b.income(p) - 1 : 0));
+    };
+    if (a.weatherImmune || b.weatherImmune) f.weatherImmune = function (w, p) {
+      return !!((a.weatherImmune && a.weatherImmune(w, p)) || (b.weatherImmune && b.weatherImmune(w, p)));
+    };
     if (a.onPower || b.onPower) f.onPower = function (g, pl, lvl) {
       if (a.onPower) a.onPower(g, pl, lvl);
       if (b.onPower) b.onPower(g, pl, lvl);

@@ -291,8 +291,8 @@ var G = (typeof globalThis!=='undefined'?globalThis:window).G = (globalThis.G||{
     form: 'A B'
   };
 
-  // Fortuna – jazzig-verspielt mit Swing (F-Dur, Walking Bass)
-  T.co_fortuna = {
+  // Tilda – jazzig-verspielt mit Swing (F-Dur, Walking Bass): Geld, Geschäfte, Spielbank-Flair
+  T.co_tilda = {
     bpm: 138, swing: 0.33, swingT: 2, echo: { beats: 0.5, fb: 0.2, mix: 0.12 },
     inst: { lead: { w: 'p50', v: 0.13, vib: 18, vibD: 0.15, gate: 0.9 }, harm: { w: 'p25', v: 0.055, gate: 0.5, s: 0.5 }, bass: { gate: 0.85 } },
     hT: '@2 C:2 . C . . C .', bT: '@2 R:2 3:2 5:2 A:2',
@@ -321,8 +321,8 @@ var G = (typeof globalThis!=='undefined'?globalThis:window).G = (globalThis.G||{
     form: 'A B A'
   };
 
-  // Ole – maritim im 6/8 (G-Dur, Tempo in punktierten Vierteln)
-  T.co_ole = {
+  // Frida – maritim im 6/8 (G-Dur, Tempo in punktierten Vierteln): Admiralin der Eismeerflotte
+  T.co_frida = {
     bpm: 100, tpb: 6, bar: 12, echo: { beats: 0.5, fb: 0.3, mix: 0.18 },
     inst: { lead: { w: 'p25', v: 0.14, vib: 20, vibD: 0.15, vibR: 5 }, harm: { w: 'p50', v: 0.05, gate: 0.55, s: 0.6 }, bass: { gate: 0.8 } },
     hT: '@2 . C C . C C', bT: "@2 R:2 5 R':2 5",
@@ -353,8 +353,8 @@ var G = (typeof globalThis!=='undefined'?globalThis:window).G = (globalThis.G||{
     form: 'A B A'
   };
 
-  // Greta – geheimnisvoll (d-Moll, harmonisch Moll, viel Echo)
-  T.co_greta = {
+  // Nora – geheimnisvoll (d-Moll, harmonisch Moll, viel Echo): Nebel und Nieselregen
+  T.co_nora = {
     bpm: 108, echo: { beats: 0.75, fb: 0.45, mix: 0.3 },
     inst: { lead: { w: 'p50', v: 0.12, vib: 22, vibD: 0.3, vibR: 4.5, a: 0.03 }, harm: { w: 'p12', v: 0.055, gate: 0.7, s: 0.3 }, bass: { v: 0.3 } },
     hT: "@2 R 5 R' 3' 5' 3' R' 5", bT: '@2 R:4 R:2 5,:2',
@@ -438,8 +438,8 @@ var G = (typeof globalThis!=='undefined'?globalThis:window).G = (globalThis.G||{
     form: 'A B'
   };
 
-  var TRACK_NAMES = ['title', 'menu', 'map_editor', 'co_rika', 'co_bastian', 'co_jara', 'co_viktor', 'co_fortuna',
-    'co_mira', 'co_ole', 'co_kurt', 'co_greta', 'co_kraehe', 'power', 'victory', 'defeat', 'briefing'];
+  var TRACK_NAMES = ['title', 'menu', 'map_editor', 'co_rika', 'co_bastian', 'co_jara', 'co_viktor', 'co_tilda',
+    'co_mira', 'co_frida', 'co_kurt', 'co_nora', 'co_kraehe', 'power', 'victory', 'defeat', 'briefing'];
 
   // ---- Compiler: Stück → sortierte Ereignisliste in Ticks
   function tickTime(c, tick) {

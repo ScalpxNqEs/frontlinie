@@ -13,7 +13,7 @@ function loadSprites() {
 
 const UNIT_IDS = 'inf mech recon apc tank mdtank titan arty rocket aa missile tcopter bcopter fighter bomber lander cruiser sub battleship'.split(' ');
 const BUILDING_IDS = ['C', 'K', 'A', 'O', 'Q'];
-const PORTRAIT_IDS = ['rika', 'bastian', 'jara', 'viktor', 'fortuna', 'mira', 'ole', 'kurt', 'greta', 'kraehe'];
+const PORTRAIT_IDS = ['rika', 'bastian', 'jara', 'viktor', 'tilda', 'mira', 'frida', 'kurt', 'nora', 'kraehe'];
 const ICON_IDS = { capture: 8, fuel: 8, ammo: 8, hidden: 8, star: 8, cursor: 16 };
 const RESERVED = '.1234';
 
