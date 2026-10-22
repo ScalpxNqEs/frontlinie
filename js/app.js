@@ -149,6 +149,21 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     timer = setInterval(tick, 1500);
   };
 
+  // ---------------------------------------------------------------- Einladungslink (#einladung=<code>)
+  // Wer den Link eines Freundes öffnet (im Browser oder in der installierten App), landet direkt im Beitritt.
+  // Läuft nach dem Start in js/main.js (der zeigt zuerst das Titelbild) und bei späteren Adresswechseln (hashchange).
+  // Der Code wird sofort aus der Adresse entfernt, damit ein Neuladen nicht noch einmal beitritt.
+  App.inviteFromHash = function () {
+    var m = /^#einladung=([A-Za-z0-9]{12,32})$/.exec(location.hash || '');
+    if (!m || !G.P2P || !G.P2P.joinInvite) return false;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* egal */ }
+    G.P2P.joinInvite(m[1].toLowerCase());
+    return true;
+  };
+  function inviteAfterBoot() { setTimeout(App.inviteFromHash, 0); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', inviteAfterBoot); else inviteAfterBoot();
+  window.addEventListener('hashchange', function () { App.inviteFromHash(); });
+
   /** Bildschirm „Handy-App“ */
   UI.showPhoneApp = function () {
     UI.music('menu');

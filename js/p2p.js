@@ -4,6 +4,9 @@
 // Die anderen verbinden sich per WebRTC-Datenkanal. Zum Verbinden zeigt Handy 1 einen Code (QR oder Text),
 // Handy 2 antwortet mit einem eigenen Code – danach laufen alle Spielzüge direkt zwischen den Geräten.
 // Lobby, Spiel und Abgleich sind dieselben wie beim Online-Gefecht (js/online.js), nur der Übertragungsweg ist anders.
+//
+// Bequemer Weg: Einladungslink („…#einladung=<code>“). Dann tauschen die Geräte die Codes selbst über einen kostenlosen
+// öffentlichen Relay (ntfy.sh, verschlüsselt) – Freunde tippen nur den Link an. Der manuelle QR-/Text-Weg bleibt als Ersatz.
 var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThis.G || {});
 (function () {
   'use strict';
@@ -95,8 +98,9 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     return 9;
   }
 
-  /** { t:'O'|'A', code?, lid?, ...parseSdp } → Text „FL1…“ */
-  function pack(o) {
+  /** { t:'O'|'A', code?, lid?, ...parseSdp } → Text „FL1…“. lim: { len, cands } – Obergrenzen (Standard: passt in einen QR-Code) */
+  function pack(o, lim) {
+    var maxCands = (lim && lim.cands) || MAX_CANDS, maxLen = (lim && lim.len) || MAX_LEN;
     var head = [];
     function str(s) { s = String(s || ''); if (s.length > 255) throw new Error('zu lang'); head.push(s.length); for (var i = 0; i < s.length; i++) head.push(s.charCodeAt(i) & 255); }
     head.push(0x10 | (o.t === 'O' ? 1 : 2));
@@ -113,7 +117,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     head.push(o.fp.length); o.fp.forEach(function (b) { head.push(b); });
     var cands = [];
     (o.cands || []).forEach(function (c) {
-      if (cands.length >= MAX_CANDS) return;
+      if (cands.length >= maxCands) return;
       var b = [], kind, m;
       if ((m = IPV4.exec(c.addr))) { kind = 0; b = [+m[1], +m[2], +m[3], +m[4]]; }
       else if ((m = UUID_LOCAL.exec(c.addr))) { kind = 2; b = hexBytes((m[1] + m[2] + m[3] + m[4] + m[5]).toLowerCase()); }
@@ -121,7 +125,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       else { kind = 3; if (c.addr.length > 255) return; b = [c.addr.length]; for (var k = 0; k < c.addr.length; k++) b.push(c.addr.charCodeAt(k) & 255); }
       var enc = [((c.typ === 'srflx' ? 1 : 0) << 4) | kind].concat(b, [c.port >> 8, c.port & 255]);
       var test = head.concat([cands.length + 1], [].concat.apply([], cands), enc);
-      if (PREFIX.length + Math.ceil(test.length * 4 / 3) > MAX_LEN) return;
+      if (PREFIX.length + Math.ceil(test.length * 4 / 3) > maxLen) return;
       cands.push(enc);
     });
     var all = head.concat([cands.length], [].concat.apply([], cands));
@@ -201,6 +205,459 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
   P2P.codec = { pack: pack, unpack: unpack, parseSdp: parseSdp, buildSdp: buildSdp, ip6Bytes: ip6Bytes, ip6Str: ip6Str };
   P2P.logicId = logicId;
 
+  // ================================================================ Einladungslink: Austausch über einen Relay (ohne DOM, in Node testbar)
+  // Ein Link „…#einladung=<code>“ genügt: Gastgeber und Gast tauschen ihre FL1-Codes selbsttätig über einen kostenlosen
+  // öffentlichen Nachrichtendienst aus (ntfy.sh – ohne Konto, ohne eigenen Server). Aus dem Code im Link werden Themenname
+  // und Schlüssel abgeleitet: Der Dienst sieht nur verschlüsselte Nachrichten und die IP-Adressen der Abrufer, nie den Code.
+  // Gespielt wird danach direkt zwischen den Geräten; der Dienst wird nur zum Verbinden gebraucht.
+  //
+  // Jede Relay-Nachricht: „FLX <id> <i>/<n> <stück>“ – längere Inhalte werden in Stücke ≤ 3000 Zeichen zerlegt
+  // (ntfy.sh nimmt höchstens 4096 Byte, größere würden zum Dateianhang). Inhalt: JSON, mit AES-GCM verschlüsselt.
+  //   Thema …-o (Angebote vom Gastgeber): { t:'O', r:[bezug], p:<vergebenes Angebot>, c:'FL1…', n:Name, m:Karte }
+  //     bezug '-' = erstes Angebot, 'a:<id>' = neues Angebot, nachdem Antwort <id> angenommen wurde (p = das damit
+  //     vergebene Angebot), 'r:<id>' = gezielt auf Anfrage <id>
+  //   Thema …-a (an den Gastgeber):       { t:'A', o:<angebots-id>, c:'FL1…' } (Antwort) oder { t:'R' } (bitte frisches Angebot)
+  // Ein Angebot gilt für genau eine Antwort; jede Nachricht hat eine eigene id, doppelt oder verspätet zugestellte zählen nicht.
+  // Beide lassen sich vor dem Laden von p2p.js setzen (G.P2P = { RELAY: 'https://ntfy.example.org' }), z. B. für einen eigenen Server.
+  P2P.RELAY = P2P.RELAY || 'https://ntfy.sh';
+  P2P.relayFactory = P2P.relayFactory || null; // function () → Relay; zum Austausch des Dienstes (eigener ntfy-Server, MQTT …) und für Tests
+  /** Zeiten (fresh in s, sonst ms): ready = Verbindung zum Relay, ask = Antwort auf eine Anfrage, wait = je Verbindungsversuch,
+   *  total = Gast insgesamt, pending = so lange darf eine angenommene Antwort zum Verbinden brauchen, tries = Versuche des Gastes,
+   *  retry = erste Pause vor dem Neuverbinden mit dem Relay (verdoppelt sich bis 30 s) */
+  P2P.LINK_TIMES = { fresh: 60, ready: 10000, publish: 10000, ask: 10000, wait: 12000, total: 25000, pending: 45000, tries: 3, retry: 1000 };
+  var INVITE_ABC = 'abcdefghjkmnpqrstuvwxyz23456789'; // ohne verwechselbare Zeichen (i, l, o, 0, 1)
+  var INVITE_LEN = 14;                                 // ≈ 69 Bit Zufall
+  var PIECE = 3000;
+  var RELAY_LIM = { len: 1200, cands: 12 };          // über den Relay passen mehr Adressen als in einen QR-Code
+  var INVITE_RE = /#einladung=([A-Za-z0-9]{12,32})/;
+  var LINK_MSG = {
+    relay: 'Der Einladungsdienst (ntfy.sh) ist gerade nicht erreichbar.',
+    nohost: 'Kein Gastgeber gefunden: Die Einladung ist abgelaufen, oder FRONTLINIE ist beim Gastgeber nicht mehr offen (sein Bildschirm muss an bleiben).',
+    connect: 'Die direkte Verbindung kommt nicht zustande – vermutlich lassen eure Netze (oft Mobilfunk) keine Direktverbindung zu. Am sichersten: beide ins selbe WLAN oder in den Hotspot des Gastgebers.'
+  };
+
+  function randomChars(n) {
+    var out = '', lim = 256 - (256 % INVITE_ABC.length), buf = new Uint8Array(n * 2);
+    while (out.length < n) {
+      globalThis.crypto.getRandomValues(buf);
+      for (var i = 0; i < buf.length && out.length < n; i++) if (buf[i] < lim) out += INVITE_ABC[buf[i] % INVITE_ABC.length];
+    }
+    return out;
+  }
+  function newInvite() { return randomChars(INVITE_LEN); }
+  function newMsgId() { return randomChars(8); }
+  function validInvite(c) { return typeof c === 'string' && /^[a-hjkmnp-z2-9]{12,32}$/.test(c); }
+  /** Einladungscode aus einem Text (Link, Nachricht) oder null */
+  function inviteIn(text) { var m = INVITE_RE.exec(String(text || '')); var c = m && m[1].toLowerCase(); return c && validInvite(c) ? c : null; }
+  function relayErr(msg) { var e = new Error(msg || LINK_MSG.relay); e.kind = 'relay'; return e; }
+  function times(over) { return Object.assign({}, P2P.LINK_TIMES, over || {}); }
+
+  // ---------------------------------------------------------------- Schlüssel und Verschlüsselung (Web Crypto)
+  function subtle() { var c = globalThis.crypto; return c && c.subtle; }
+  function utf8(s) { return new TextEncoder().encode(s); }
+  function sha256(text) { return subtle().digest('SHA-256', utf8(text)).then(function (b) { return new Uint8Array(b); }); }
+  /** Code → { offers, answers (Themennamen), key (AES-GCM) } – der Code selbst verlässt das Gerät nie */
+  function inviteKeys(code) {
+    return Promise.all([sha256('frontlinie-thema|' + code), sha256('frontlinie-schluessel|' + code)]).then(function (r) {
+      var topic = 'frontlinie-' + bytesHex(r[0].slice(0, 10));
+      return subtle().importKey('raw', r[1], { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']).then(function (key) {
+        return { offers: topic + '-o', answers: topic + '-a', key: key };
+      });
+    });
+  }
+  function seal(key, obj) {
+    var iv = new Uint8Array(12);
+    globalThis.crypto.getRandomValues(iv);
+    return subtle().encrypt({ name: 'AES-GCM', iv: iv }, key, utf8(JSON.stringify(obj))).then(function (ct) {
+      var c = new Uint8Array(ct), all = new Uint8Array(12 + c.length);
+      all.set(iv); all.set(c, 12);
+      return b64uEnc(all);
+    });
+  }
+  function unseal(key, text) {
+    return Promise.resolve().then(function () {
+      var b = b64uDec(text);
+      if (b.length < 29) throw new Error('zu kurz');
+      return subtle().decrypt({ name: 'AES-GCM', iv: b.slice(0, 12) }, key, b.slice(12));
+    }).then(function (pt) { return JSON.parse(new TextDecoder().decode(pt)); });
+  }
+
+  // ---------------------------------------------------------------- Stückeln und Zusammensetzen
+  function pieces(id, text) {
+    var n = Math.max(1, Math.ceil(text.length / PIECE)), out = [];
+    for (var i = 0; i < n; i++) out.push('FLX ' + id + ' ' + (i + 1) + '/' + n + ' ' + text.substr(i * PIECE, PIECE));
+    return out;
+  }
+  /** Sammelt Stücke; add({ message, time }) liefert jede vollständige Nachricht genau einmal: { id, text, time } */
+  function Assembler() {
+    var got = {};
+    return {
+      add: function (m) {
+        var x = /^FLX ([a-z0-9]{4,16}) (\d{1,2})\/(\d{1,2}) ([A-Za-z0-9_-]+)$/.exec(String((m && m.message) || ''));
+        if (!x) return null;
+        var id = x[1], i = +x[2], n = +x[3];
+        if (!(n >= 1 && i >= 1 && i <= n)) return null;
+        var r = got[id] || (got[id] = { n: n, have: 0, arr: [], time: 0, done: false });
+        if (r.done || r.n !== n) return null;
+        if (r.arr[i - 1] == null) { r.arr[i - 1] = x[4]; r.have++; }
+        if (+m.time > r.time) r.time = +m.time;
+        if (r.have < n) return null;
+        var text = r.arr.join('');
+        r.done = true; r.arr = [];
+        return { id: id, text: text, time: r.time };
+      }
+    };
+  }
+  /** Inhalt verschlüsseln, stückeln und der Reihe nach veröffentlichen */
+  function sendSealed(relay, topic, key, id, obj) {
+    return seal(key, obj).then(function (txt) {
+      var p = Promise.resolve();
+      pieces(id, txt).forEach(function (m) { p = p.then(function () { return relay.publish(topic, m); }); });
+      return p;
+    });
+  }
+
+  // ---------------------------------------------------------------- Relay „ntfy“ (HTTP + WebSocket)
+  /**
+   * opts: { base ('https://ntfy.sh' oder eigener ntfy-Server), fetch, WebSocket (beide austauschbar, z. B. für Tests), times }
+   * → { publish(topic, text) → Promise<{id,time}>, poll(topic) → Promise<[{id,time,message}]>,
+   *     subscribe(topic, onMsg) → { ready: Promise, now() (Serverzeit in s), kick(), close() } }
+   */
+  P2P.ntfyRelay = function (opts) {
+    opts = opts || {};
+    var base = String(opts.base || P2P.RELAY).replace(/\/+$/, ''), wsBase = base.replace(/^http/i, 'ws');
+    var host = base.replace(/^\w+:\/\//, '');
+    var doFetch = opts.fetch || function (u, o) { return fetch(u, o); };
+    var WS = opts.WebSocket || (typeof WebSocket !== 'undefined' ? WebSocket : null);
+    var t = times(opts.times);
+    var down = 'Der Einladungsdienst (' + host + ') ist nicht erreichbar.';
+    function timed(run) {
+      return new Promise(function (resolve, reject) {
+        var timer = setTimeout(function () { reject(relayErr('Der Einladungsdienst (' + host + ') antwortet nicht.')); }, t.publish);
+        Promise.resolve().then(run).then(function (v) { clearTimeout(timer); resolve(v); }, function (e) {
+          clearTimeout(timer); reject(e && e.kind ? e : relayErr(down));
+        });
+      });
+    }
+    function checked(res) {
+      if (res.status === 429) throw relayErr('Der Einladungsdienst ist gerade überlastet (zu viele Anfragen) – bitte eine Minute warten.');
+      if (!res.ok) throw relayErr('Der Einladungsdienst meldet Fehler ' + res.status + '.');
+      return res;
+    }
+    var R = { base: base };
+    R.publish = function (topic, text) {
+      return timed(function () {
+        return doFetch(base + '/' + topic, { method: 'POST', body: text }).then(checked).then(function (res) { return res.json(); });
+      }).then(function (j) { return { id: j && j.id, time: j && j.time }; });
+    };
+    R.poll = function (topic) {
+      return timed(function () {
+        return doFetch(base + '/' + topic + '/json?poll=1&since=all', { cache: 'no-store' }).then(checked).then(function (res) { return res.text(); });
+      }).then(function (txt) {
+        var out = [];
+        String(txt || '').split('\n').forEach(function (l) {
+          if (!l.trim()) return;
+          var m; try { m = JSON.parse(l); } catch (e) { return; }
+          if (m && m.event === 'message') out.push({ id: m.id, time: m.time, message: String(m.message || '') });
+        });
+        return out;
+      });
+    };
+    /** Live-Empfang; verbindet sich nach Abbrüchen selbst neu (mit wachsender Pause) und holt Verpasstes nach */
+    R.subscribe = function (topic, onMsg) {
+      var S = { up: false, closed: false, skew: 0 }, ws = null, timer = null, delay = t.retry, lastId = null, downAt = 0, everOpen = false;
+      var seen = Date.now(), SILENT = 120000; // ntfy schickt regelmäßig „keepalive“ – bleibt alles still, ist die Verbindung tot
+      var readyOk, readyFail;
+      S.ready = new Promise(function (a, b) { readyOk = a; readyFail = b; });
+      S.ready.catch(function () { /* wird vom Aufrufer behandelt */ });
+      var readyTimer = setTimeout(function () { if (!everOpen) { readyFail(relayErr(down)); S.close(); } }, t.ready);
+      function connect() {
+        if (S.closed) return;
+        var q = lastId ? '?since=' + encodeURIComponent(lastId) : downAt ? '?since=' + Math.max(0, Math.floor(downAt - 10)) : '';
+        var sock;
+        seen = Date.now();
+        try { sock = ws = new WS(wsBase + '/' + topic + '/ws' + q); } catch (e) { ws = null; lost(); return; }
+        sock.onmessage = function (e) {
+          if (ws !== sock) return;
+          seen = Date.now();
+          var m; try { m = JSON.parse(e.data); } catch (err) { return; }
+          if (!m) return;
+          if (m.event === 'open') {
+            S.up = true; delay = t.retry;
+            if (typeof m.time === 'number') S.skew = m.time - Date.now() / 1000;
+            if (!everOpen) { everOpen = true; clearTimeout(readyTimer); readyOk(); }
+            return;
+          }
+          if (m.event !== 'message') return;
+          if (m.id) lastId = m.id;
+          try { onMsg({ id: m.id, time: m.time, message: String(m.message || '') }); } catch (err) { console.warn('[P2P] Relay:', err); }
+        };
+        sock.onclose = function () {
+          if (ws !== sock) return;
+          ws = null;
+          if (S.up) downAt = Date.now() / 1000 + S.skew;
+          S.up = false;
+          lost();
+        };
+        sock.onerror = function () { /* onclose folgt */ };
+      }
+      function lost() {
+        if (S.closed) return;
+        if (!everOpen) { clearTimeout(readyTimer); readyFail(relayErr(down)); S.close(); return; }
+        clearTimeout(timer);
+        timer = setTimeout(connect, delay);
+        delay = Math.min(delay * 2, 30000);
+      }
+      S.now = function () { return Date.now() / 1000 + S.skew; };
+      /** Halbtote Verbindung (z. B. nach dem Hintergrund am Handy) verwerfen und neu verbinden */
+      function restart() {
+        var s = ws; ws = null;
+        if (s) { s.onclose = s.onmessage = null; try { s.close(); } catch (e) { /* egal */ } }
+        if (S.up) downAt = Date.now() / 1000 + S.skew;
+        S.up = false;
+        clearTimeout(timer); delay = t.retry; connect();
+      }
+      S.kick = function () {
+        if (S.closed || !everOpen) return;
+        if (!ws) { clearTimeout(timer); delay = t.retry; connect(); } else if (Date.now() - seen > SILENT) restart();
+      };
+      var watch = setInterval(function () { if (!S.closed && everOpen && ws && Date.now() - seen > SILENT) restart(); }, 30000);
+      S.close = function () {
+        if (S.closed) return;
+        S.closed = true;
+        clearInterval(watch);
+        clearTimeout(timer); clearTimeout(readyTimer);
+        var s = ws; ws = null;
+        if (s) { try { s.close(); } catch (e) { /* egal */ } }
+      };
+      if (!WS) { clearInterval(watch); setTimeout(lost, 0); return S; }
+      connect();
+      return S;
+    };
+    return R;
+  };
+
+  // ---------------------------------------------------------------- Gastgeber-Seite
+  /**
+   * Veröffentlicht Angebote und nimmt Antworten entgegen (solange der Raum besteht).
+   * o: { invite, relay, offer() → Promise<{ code, accept(antwortCode) → Promise, drop(), opened?: Promise }>,
+   *      info() → { n: Name, m: Karte }, onChange(H), times }
+   * H.state: 'neu' | 'start' | 'bereit' | 'fehler' | 'aus'
+   */
+  P2P.LinkHost = function (o) {
+    var t = times(o.times), relay = o.relay;
+    var H = { invite: o.invite, state: 'neu', error: '', joined: 0, connecting: 0, offers: 0 };
+    var keys = null, sub = null, offers = {}, general = null, seen = {}, asm = Assembler(), chain = Promise.resolve(), stopped = true, timers = [];
+    function later(fn, ms) {
+      var id = setTimeout(function () { var k = timers.indexOf(id); if (k >= 0) timers.splice(k, 1); fn(); }, ms);
+      timers.push(id);
+    }
+    function changed(state, err) {
+      if (state) H.state = state;
+      if (err != null) H.error = err;
+      if (o.onChange) { try { o.onChange(H); } catch (e) { console.warn('[P2P]', e); } }
+    }
+    // Angebote nacheinander erzeugen (jedes braucht ein paar Sekunden für die Adressermittlung)
+    function queue(fn) {
+      chain = chain.then(function () { if (!stopped) return fn(); }).catch(function (e) {
+        if (!stopped) console.warn('[P2P] Angebot nicht veröffentlicht:', e && e.message);
+      });
+      return chain;
+    }
+    function retire(rec) {
+      if (offers[rec.id] === rec) delete offers[rec.id];
+      try { rec.hd.drop(); } catch (e) { /* egal */ }
+    }
+    function offerNow(ref, isGeneral, prev) {
+      return Promise.resolve().then(function () { return o.offer(); }).then(function (hd) {
+        if (stopped) { hd.drop(); return; }
+        var rec = { id: newMsgId(), hd: hd, general: isGeneral, used: false };
+        offers[rec.id] = rec; // schon vor dem Veröffentlichen bekannt – eine schnelle Antwort darf nicht verloren gehen
+        var info = (o.info && o.info()) || {};
+        return sendSealed(relay, keys.offers, keys.key, rec.id, { t: 'O', r: [ref], p: prev || '', c: hd.code, n: info.n || '', m: info.m || '' }).then(function () {
+          if (stopped) { retire(rec); return; }
+          H.offers++;
+          if (isGeneral) { if (general && general !== rec && !general.used) retire(general); general = rec; }
+          else later(function () { if (!rec.used) retire(rec); }, t.pending);
+        }, function (e) { retire(rec); throw e; });
+      });
+    }
+    function onAnswer(p, x) {
+      var rec = offers[x.o];
+      if (!rec || rec.used || typeof x.c !== 'string') return; // unbekannt, schon vergeben oder kaputt
+      rec.used = true;
+      H.joined++; H.connecting++;
+      changed();
+      var settled = false;
+      function settle() { if (settled) return; settled = true; H.connecting = Math.max(0, H.connecting - 1); changed(); }
+      if (rec.hd.opened) rec.hd.opened.then(settle, settle);
+      Promise.resolve().then(function () { return rec.hd.accept(x.c); }).catch(function (e) {
+        console.warn('[P2P] Antwort passt nicht:', e && e.message); settle();
+      });
+      later(function () { settle(); retire(rec); }, t.pending);
+      // Sofort ein frisches Angebot für den nächsten Gast (und als Bestätigung für diesen: Bezug 'a:<id>')
+      if (rec.general) queue(function () { return offerNow('a:' + p.id, true, rec.id); });
+    }
+    function onMsg(m) {
+      var p = asm.add(m), k = keys;
+      if (!p || !k || seen[p.id]) return;
+      seen[p.id] = true;
+      unseal(k.key, p.text).then(function (x) {
+        if (stopped || keys !== k || !x) return;
+        if (x.t === 'R') queue(function () { return offerNow('r:' + p.id, false); });
+        else if (x.t === 'A') onAnswer(p, x);
+      }, function () { /* nicht für uns oder kaputt */ });
+    }
+    H.start = function () {
+      if (!stopped) return Promise.resolve();
+      stopped = false;
+      changed('start', '');
+      return inviteKeys(o.invite).then(function (k) {
+        if (stopped) return;
+        keys = k;
+        sub = relay.subscribe(k.answers, onMsg);
+        return sub.ready.then(function () { if (!stopped) return offerNow('-', true); })
+          .then(function () { if (!stopped) changed('bereit', ''); });
+      }).catch(function (e) {
+        if (!stopped) H.stop('fehler', (e && e.message) || 'Einladungslink nicht möglich.');
+      });
+    };
+    H.stop = function (state, err) {
+      stopped = true;
+      timers.forEach(clearTimeout); timers = [];
+      if (sub) { sub.close(); sub = null; }
+      Object.keys(offers).forEach(function (id) { retire(offers[id]); });
+      general = null; keys = null; chain = Promise.resolve();
+      changed(state || 'aus', err || '');
+    };
+    /** Nach dem Aufwachen (Handy war im Hintergrund): Relay sofort neu verbinden */
+    H.wake = function () { if (sub) sub.kick(); };
+    return H;
+  };
+
+  // ---------------------------------------------------------------- Gast-Seite
+  /**
+   * Aktuelles Angebot holen (zu alt oder keins → frisches anfordern), beantworten, auf die direkte Verbindung warten.
+   * o: { invite, relay, answer(angebotsCode) → Promise<{ code, opened: Promise<link>, close() }>, onStep(text), times }
+   * → { promise: Promise<{ link, offer, info: { n, m } }>, cancel() }; Fehler tragen kind: 'relay' | 'nohost' | 'connect' | 'abort'
+   */
+  P2P.linkJoin = function (o) {
+    var t = times(o.times), relay = o.relay;
+    var keys = null, sub = null, asm = Assembler(), known = {}, decrypting = [], order = 0;
+    var cur = null, waitReq = null, tries = 0, answered = false, finished = false, timers = [], handles = [];
+    var resolveP, rejectP, promise = new Promise(function (a, b) { resolveP = a; rejectP = b; });
+    function later(fn, ms) {
+      var id = setTimeout(function () { var k = timers.indexOf(id); if (k >= 0) timers.splice(k, 1); fn(); }, ms);
+      timers.push(id);
+    }
+    function step(s) { if (!finished && o.onStep) { try { o.onStep(s); } catch (e) { /* egal */ } } }
+    function finish(err, val) {
+      if (finished) return;
+      finished = true;
+      timers.forEach(clearTimeout); timers = [];
+      if (sub) { sub.close(); sub = null; }
+      handles.forEach(function (hd) { if (!val || hd !== val.hd) { try { hd.close(); } catch (e) { /* egal */ } } });
+      if (err) rejectP(err); else resolveP({ link: val.link, offer: val.offer, info: val.info });
+    }
+    function fail(kind, msg) { var e = new Error(msg || LINK_MSG[kind]); e.kind = kind; finish(e); }
+    function failNoConn() { fail(answered ? 'connect' : 'nohost'); }
+    function general(rec) { return rec.refs.some(function (r) { return r === '-' || r.indexOf('a:') === 0; }); }
+    function remember(p) {
+      var seq = ++order; // Eingangsreihenfolge (ntfy liefert der Zeit nach) – entscheidet bei gleicher Sekunde
+      var pr = unseal(keys.key, p.text).then(function (x) {
+        if (!x || x.t !== 'O' || typeof x.c !== 'string') return null;
+        var off;
+        try { off = unpack(x.c); } catch (e) { return null; }
+        if (off.t !== 'O') return null;
+        var rec = { id: p.id, time: +p.time || 0, seq: seq, refs: Array.isArray(x.r) ? x.r.map(String) : [], prev: String(x.p || ''), code: x.c, offer: off,
+          info: { n: String(x.n || '').slice(0, 18), m: String(x.m || '').slice(0, 40) } };
+        known[p.id] = rec;
+        return rec;
+      }, function () { return null; });
+      decrypting.push(pr);
+      return pr;
+    }
+    function onLive(m) {
+      if (!keys) return;
+      var p = asm.add(m);
+      if (!p) return;
+      remember(p).then(function (rec) {
+        if (!rec || finished) return;
+        if (waitReq && rec.refs.indexOf('r:' + waitReq) >= 0) { waitReq = null; use(rec); return; }
+        if (!cur || !cur.general || !cur.answerId || !general(rec) || rec.id === cur.rec.id) return;
+        if (rec.refs.indexOf('a:' + cur.answerId) >= 0) { cur.accepted = true; step('Der Gastgeber nimmt an – verbinde direkt …'); }
+        // Ein anderer Gast war schneller (oder der Gastgeber hat neu begonnen): gleich das neue Angebot nehmen
+        else if (!cur.accepted && !waitReq && (rec.prev === cur.rec.id || rec.refs[0] === '-')) use(rec);
+      });
+    }
+    function use(rec) {
+      if (finished) return;
+      if (tries >= t.tries) { failNoConn(); return; }
+      tries++;
+      if (cur && cur.hd) { try { cur.hd.close(); } catch (e) { /* egal */ } }
+      var c = cur = { rec: rec, general: general(rec), answerId: null, accepted: false, hd: null };
+      step((rec.info.n ? 'Einladung von ' + rec.info.n : 'Einladung gefunden') + ' – Antwort wird erstellt …');
+      Promise.resolve().then(function () { return o.answer(rec.code); }).then(function (hd) {
+        handles.push(hd);
+        if (finished || cur !== c) { try { hd.close(); } catch (e) { /* egal */ } return; }
+        c.hd = hd;
+        Promise.resolve(hd.opened).then(function (link) {
+          if (link && !finished && cur === c) finish(null, { link: link, offer: rec.offer, info: rec.info, hd: hd });
+        });
+        var id = c.answerId = newMsgId();
+        return sendSealed(relay, keys.answers, keys.key, id, { t: 'A', o: rec.id, c: hd.code }).then(function () {
+          if (finished || cur !== c) return;
+          answered = true;
+          step('Warte auf den Gastgeber …');
+          // Keine Verbindung? Dann ein frisches Angebot anfordern (der laufende Versuch darf derweil weiterlaufen)
+          later(function () { if (!finished && cur === c && !waitReq) request(); }, t.wait);
+        });
+      }).catch(function (e) {
+        if (finished) return;
+        if (e && e.kind === 'relay') fail('relay', e.message);
+        else fail('connect', (e && e.message) || LINK_MSG.connect);
+      });
+    }
+    function request() {
+      if (finished) return;
+      if (tries >= t.tries) { failNoConn(); return; }
+      var id = waitReq = newMsgId();
+      step('Frage beim Gastgeber nach einem frischen Angebot …');
+      sendSealed(relay, keys.answers, keys.key, id, { t: 'R' }).then(function () {
+        later(function () {
+          if (finished || waitReq !== id) return;
+          if (cur && cur.hd) return; // ein laufender Versuch darf bis zum Ende der Gesamtzeit weiterlaufen
+          failNoConn();
+        }, t.ask);
+      }, function (e) { if (!finished) fail('relay', e && e.message); });
+    }
+    later(failNoConn, t.total);
+    step('Hole die Einladung …');
+    Promise.resolve().then(function () { return inviteKeys(o.invite); }).then(function (k) {
+      if (finished) return;
+      keys = k;
+      sub = relay.subscribe(k.offers, onLive);   // zuerst live zuhören, dann Gepuffertes holen – so geht nichts verloren
+      return sub.ready.then(function () { return relay.poll(k.offers); }).then(function (list) {
+        list.forEach(function (m) { var p = asm.add(m); if (p) remember(p); });
+        return Promise.all(decrypting.slice());
+      }).then(function () {
+        if (finished || cur || waitReq) return;
+        // Das neueste allgemeine Angebot, das noch nicht vergeben ist
+        var best = null, used = {};
+        Object.keys(known).forEach(function (id) { if (known[id].prev) used[known[id].prev] = true; });
+        Object.keys(known).forEach(function (id) {
+          var r = known[id];
+          if (general(r) && !used[id] && (!best || r.time > best.time || (r.time === best.time && r.seq > best.seq))) best = r;
+        });
+        var now = sub ? sub.now() : Date.now() / 1000;
+        // Ein frisches Angebot sofort nutzen; ein altes nicht (die Adressen im Router könnten verfallen sein)
+        if (best && now - best.time <= t.fresh) use(best); else request();
+      });
+    }).catch(function (e) { if (!finished) fail('relay', e && e.kind === 'relay' ? e.message : LINK_MSG.relay); });
+    return { promise: promise, cancel: function () { fail('abort', 'Abgebrochen.'); } };
+  };
+  P2P.invite = { make: newInvite, valid: validInvite, find: inviteIn, keys: inviteKeys, seal: seal, unseal: unseal, pieces: pieces, Assembler: Assembler, PIECE: PIECE, RELAY_LIM: RELAY_LIM };
+
   if (typeof document === 'undefined' || !G.UI) return; // ab hier nur im Browser
 
   // ================================================================ Browser-Teil
@@ -277,6 +734,81 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       pc.addEventListener('icegatheringstatechange', chk);
       pc.addEventListener('icecandidate', cand);
     });
+  }
+
+  // ---------------------------------------------------------------- Einladungslink: WebRTC-Anbindung und Relay
+  function getRelay() { return (P2P.relayFactory && P2P.relayFactory()) || P2P.ntfyRelay({ base: P2P.RELAY }); }
+  /** Warum geht der Einladungslink hier nicht? ('' = geht) */
+  function linkProblem() {
+    if (!P2P.supported()) return 'Dieser Browser kann keine direkte Verbindung (WebRTC fehlt).';
+    if (!/^https?:$/.test(location.protocol)) return 'Aus einer lokalen Datei heraus geht kein Einladungslink – öffne das Spiel über seine Internet-Adresse (z. B. GitHub Pages).';
+    if (!window.isSecureContext || !subtle()) return 'Der Einladungslink braucht eine sichere Adresse (https), z. B. die Fassung auf GitHub Pages.';
+    if (typeof WebSocket === 'undefined' || typeof fetch !== 'function') return 'Dieser Browser ist zu alt für den Einladungslink.';
+    return '';
+  }
+  P2P.linkSupported = function () { return !linkProblem(); };
+  P2P.linkProblem = linkProblem;
+  function linkUrl(invite) { return location.origin + location.pathname + '#einladung=' + invite; }
+  /** Adresse nur im eigenen Netz/Gerät erreichbar? (dann taugt der Link nicht für Freunde) */
+  function localAddress() { return /^(localhost|127\.|\[?::1\]?$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|[^.]+$)/.test(location.hostname); }
+  var NO_NET = 'Keine Netzverbindung gefunden – bitte WLAN oder mobile Daten einschalten.';
+
+  /** Gastgeber: ein Angebot (eigene Verbindung) für den Einladungslink. Verbindet sich der Gast, wird er Mitspieler. */
+  function rtcOffer(roomCode) {
+    var pc = new RTCPeerConnection({ iceServers: STUN });
+    var dc = pc.createDataChannel('frontlinie', { ordered: true });
+    var linked = false, dropped = false, openOk;
+    var opened = new Promise(function (r) { openOk = r; });
+    dc.onopen = function () {
+      if (linked || dropped) return;
+      linked = true;
+      attachPeer(Link(pc, dc));
+      UI.sfx('confirm');
+      UI.toast('✓ Mitspieler verbunden.', 3500);
+      openOk(true);
+    };
+    function drop() { if (!linked && !dropped) { dropped = true; try { pc.close(); } catch (e) { /* egal */ } } }
+    return pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).then(function () { return gather(pc); }).then(function () {
+      var info = parseSdp(pc.localDescription.sdp);
+      if (!info.cands.length) throw new Error(NO_NET);
+      return {
+        code: pack(Object.assign({ t: 'O', code: roomCode, lid: logicId() }, info), RELAY_LIM),
+        opened: opened,
+        accept: function (txt) {
+          var a = unpack(txt);
+          if (a.t !== 'A') throw new Error('Das ist keine Antwort.');
+          return pc.setRemoteDescription({ type: 'answer', sdp: buildSdp(a) });
+        },
+        drop: drop
+      };
+    }).catch(function (e) { drop(); throw e; });
+  }
+  /** Gast: Antwort auf ein Angebot; opened liefert die fertige Verbindung (Link) */
+  function rtcAnswer(offerCode) {
+    var o = unpack(offerCode);
+    var pc = new RTCPeerConnection({ iceServers: STUN });
+    var link = null, closed = false, openOk;
+    var opened = new Promise(function (r) { openOk = r; });
+    pc.ondatachannel = function (ev) {
+      var dc = ev.channel;
+      function go() { if (link || closed) return; link = Link(pc, dc); openOk(link); }
+      if (dc.readyState === 'open') go(); else dc.onopen = go;
+    };
+    function close() {
+      if (closed) return;
+      closed = true;
+      if (link) link.close('überzählig'); else { try { pc.close(); } catch (e) { /* egal */ } }
+    }
+    return pc.setRemoteDescription({ type: 'offer', sdp: buildSdp(o) })
+      .then(function () { return pc.createAnswer(); })
+      .then(function (a) { return pc.setLocalDescription(a); })
+      .then(function () { return gather(pc); })
+      .then(function () {
+        var info = parseSdp(pc.localDescription.sdp);
+        if (!info.cands.length) throw new Error(NO_NET);
+        return { code: pack(Object.assign({ t: 'A' }, info), RELAY_LIM), opened: opened, close: close };
+      })
+      .catch(function (e) { close(); throw e; });
   }
 
   // ---------------------------------------------------------------- Nachgebildeter Ereignisstrom (wie EventSource)
@@ -358,11 +890,37 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
   }
   function dropRoom(code) {
     if (saveTimers[code]) { clearTimeout(saveTimers[code]); delete saveTimers[code]; }
+    stopLink(code);
+    Store.del('p2p:link:' + code);
     Store.del('p2p:room:' + code);
     Store.set('p2p:rooms', roomIndex().filter(function (x) { return x.code !== code; }));
   }
   window.addEventListener('pagehide', function () {
     Object.keys(saveTimers).forEach(function (code) { clearTimeout(saveTimers[code]); delete saveTimers[code]; var r = hub && hub.rooms.get(code); if (r) saveRoom(r); });
+  });
+
+  // ---------------------------------------------------------------- Einladungslink des Gastgebers (je Raum, solange der Raum besteht)
+  var linkHosts = {}, wantLink = false;
+  function startLink(code, invite) {
+    stopLink(code);
+    invite = validInvite(invite) ? invite : newInvite();
+    Store.set('p2p:link:' + code, invite);
+    var lh = linkHosts[code] = P2P.LinkHost({
+      invite: invite, relay: getRelay(),
+      offer: function () { return rtcOffer(code); },
+      info: function () {
+        var r = hub && hub.rooms.get(code), seat = r && r.seats.filter(function (x) { return x.host; })[0];
+        return { n: (seat && seat.name) || Net().name() || '', m: r ? r.setup.map.name : '' };
+      },
+      onChange: function () { if (P2P.onPeers) P2P.onPeers(); }
+    });
+    lh.start();
+    return lh;
+  }
+  function stopLink(code) { var lh = linkHosts[code]; if (lh) { delete linkHosts[code]; lh.stop(); } }
+  // Handy war im Hintergrund: Relay sofort neu verbinden statt auf die nächste Wiederholung zu warten
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') Object.keys(linkHosts).forEach(function (k) { linkHosts[k].wake(); });
   });
 
   function hostTransport(code) {
@@ -383,7 +941,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
         return es;
       },
       invitePanel: hostInvitePanel,
-      reconnectMenu: function () { openHostInvite(code); }
+      reconnectMenu: function () { if (linkHosts[code]) openLinkDialog(code); else openHostInvite(code); }
     };
   }
   /** Verbundenes Handy bedienen: Anfragen und Ereignisströme über den Datenkanal */
@@ -424,6 +982,8 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     var r = hubRequest('api/rooms', { setup: setup, name: Net().name() });
     if (!r || !r.ok) { UI.alert((r && r.error) || 'Raum konnte nicht eröffnet werden.'); return; }
     UI.sfx('confirm');
+    if (wantLink && P2P.linkSupported()) startLink(r.code);
+    wantLink = false;
     Net().open(r.code, r.token, r.slot, hostTransport(r.code));
   };
   function openHostRoom(code) {
@@ -434,6 +994,9 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       try { room = hb.load(d); } catch (e) { UI.alert('Spielstand nicht lesbar.'); return; }
     }
     var seat = room.seats.filter(function (s) { return s.host; })[0];
+    // Gab es einen Einladungslink, gilt er weiter – Mitspieler kommen über denselben Link zurück
+    var inv = Store.get('p2p:link:' + room.code, null);
+    if (inv && !linkHosts[room.code] && P2P.linkSupported()) startLink(room.code, inv);
     Net().open(room.code, seat.token, seat.slot, hostTransport(room.code));
   }
 
@@ -488,22 +1051,73 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     var box = h('div', { class: 'p2p-invite' });
     function render() {
       box.innerHTML = '';
-      box.appendChild(h('h3', { text: 'Mitspieler verbinden' }));
-      var n = peers.length;
-      box.appendChild(h('p', { html: n ? '<span class="dot on"></span> ' + n + ' Handy' + (n > 1 ? 's' : '') + ' verbunden.' : 'Noch kein Handy verbunden.' }));
-      box.appendChild(h('button', { class: 'btn primary big', onclick: function () { openHostInvite(s.code); } }, [
-        h('b', { text: '📲 Einladung zeigen' }), h('small', { text: 'Handy 2 scannt sie unter „Handy zu Handy“ → „Beitreten“' })]));
-      box.appendChild(h('p', { class: 'hint', text: 'Am zuverlässigsten: beide Handys im selben WLAN – oder Handy 2 im Hotspot dieses Handys. Dieses Handy ist der Gastgeber und muss während des Spiels an bleiben.' }));
+      var lh = linkHosts[s.code], n = peers.length, can = P2P.linkSupported();
+      box.appendChild(h('h3', { text: lh ? '🔗 Einladungslink' : 'Mitspieler verbinden' }));
+      box.appendChild(h('p', { html: n ? '<span class="dot on"></span> ' + n + ' Mitspieler direkt verbunden.' : 'Noch kein Mitspieler verbunden.' }));
+      if (lh) box.appendChild(linkBlock(lh, s.code));
+      else if (can) {
+        box.appendChild(h('button', { class: 'btn primary big', onclick: function () { startLink(s.code); render(); } }, [
+          h('b', { text: '🔗 Einladungslink erstellen' }), h('small', { text: 'Ein Link für alle – Freunde tippen ihn einfach an' })]));
+      }
+      box.appendChild(h('button', { class: 'btn big' + (lh || can ? '' : ' primary'), onclick: function () { openHostInvite(s.code); } }, [
+        h('b', { text: '📲 Einladung per QR-Code' }), h('small', { text: 'Ohne Internet (selbes WLAN, Hotspot): Codes gegenseitig scannen' })]));
+      box.appendChild(h('p', { class: 'hint', text: 'Dieses Gerät ist der Gastgeber: Während des Spiels FRONTLINIE offen und den Bildschirm an lassen.' }));
     }
     P2P.onPeers = function () { if (box.isConnected) render(); };
     render();
     return box;
   }
+  /** Link als QR-Code und Text, Teilen/Kopieren und Stand des Einladungslinks */
+  function linkBlock(lh, code) {
+    var wrap = h('div', { class: 'p2p-link invite' });
+    if (lh.state === 'fehler') {
+      wrap.appendChild(h('p', { class: 'warn', text: lh.error || LINK_MSG.relay }));
+      wrap.appendChild(h('button', { class: 'btn primary', text: 'Nochmal versuchen', onclick: function () { startLink(code, lh.invite); if (P2P.onPeers) P2P.onPeers(); } }));
+      wrap.appendChild(h('p', { class: 'hint', text: 'Bis dahin geht es mit „Einladung per QR-Code“.' }));
+      return wrap;
+    }
+    if (lh.state !== 'bereit') { wrap.appendChild(h('p', { class: 'hint', html: '<span class="dot wait"></span> Einladungslink wird erstellt …' })); return wrap; }
+    var url = linkUrl(lh.invite);
+    var qr; try { qr = G.QR.canvas(url, 5); qr.className = 'qr'; } catch (e) { qr = h('p', { class: 'hint', text: '(QR-Code nicht möglich)' }); }
+    wrap.appendChild(qr);
+    var input = h('input', { type: 'text', readonly: 'readonly', value: url, class: 'text-in link' });
+    input.addEventListener('focus', function () { input.select(); });
+    wrap.appendChild(input);
+    var row = h('div', { class: 'row' });
+    if (navigator.share) row.appendChild(h('button', { class: 'btn primary', text: 'Teilen …', onclick: function () {
+      navigator.share({ title: 'FRONTLINIE', text: 'Spiel mit mir FRONTLINIE! Einfach den Link antippen:', url: url }).catch(function () {});
+    } }));
+    row.appendChild(h('button', { class: 'btn' + (navigator.share ? '' : ' primary'), text: 'Kopieren', onclick: function () { copyText(url, input); } }));
+    wrap.appendChild(row);
+    wrap.appendChild(h('p', { class: 'p2p-link-status', html: lh.connecting ? '<span class="dot wait"></span> Ein Mitspieler verbindet sich …' : '<span class="dot wait"></span> Warte auf Mitspieler …' }));
+    if (localAddress()) wrap.appendChild(h('p', { class: 'warn', text: 'Achtung: Der Link zeigt auf „' + location.host + '“ – das erreichen Freunde nicht. Für Einladungen das Spiel über seine Internet-Adresse öffnen (z. B. GitHub Pages).' }));
+    wrap.appendChild(h('p', { class: 'hint', text: 'Per Messenger schicken oder den QR-Code scannen lassen. Der Link gilt, solange dieser Raum offen ist – auch zum Zurückkommen nach einem Verbindungsabbruch.' }));
+    return wrap;
+  }
+  /** Im Spiel: Einladungslink nochmal zeigen (z. B. wenn ein Mitspieler die Verbindung verloren hat) */
+  function openLinkDialog(code) {
+    var d = dialog('🔗 Mitspieler einladen'), key = null;
+    function state() { var lh = linkHosts[code]; return [lh ? lh.state : '-', lh ? lh.connecting : 0, peers.length].join(); }
+    function render() {
+      key = state();
+      d.body.innerHTML = '';
+      var lh = linkHosts[code];
+      if (!lh) { d.close(); openHostInvite(code); return; }
+      d.body.appendChild(h('p', { html: peers.length ? '<span class="dot on"></span> ' + peers.length + ' Mitspieler direkt verbunden.' : 'Gerade ist kein Mitspieler verbunden.' }));
+      d.body.appendChild(linkBlock(lh, code));
+      d.body.appendChild(h('p', { class: 'hint', text: 'Verbindung verloren? Der Mitspieler tippt einfach nochmal auf den Link (oder Spielmenü → „Neu verbinden“) und kommt auf seinen Platz zurück.' }));
+      d.body.appendChild(h('button', { class: 'btn', text: '📲 Einladung per QR-Code (ohne Internet)', onclick: function () { d.close(); openHostInvite(code); } }));
+    }
+    var timer = setInterval(function () { if (!d.closed && state() !== key) render(); }, 700);
+    d.onclose = function () { clearInterval(timer); };
+    render();
+  }
 
   // ================================================================ Mitspieler: verbindet sich mit Handy 1
   function guestSessions() { return Store.get('p2p:guest', {}); }
-  function saveGuest(code, token, slot) {
-    var all = guestSessions(); all[code] = { token: token, slot: slot, at: Date.now() };
+  function saveGuest(code, token, slot, invite) {
+    var all = guestSessions(), old = all[code];
+    all[code] = { token: token, slot: slot, at: Date.now(), invite: invite || (old && old.invite) || null };
     Object.keys(all).sort(function (a, b) { return all[b].at - all[a].at; }).slice(6).forEach(function (k) { delete all[k]; });
     Store.set('p2p:guest', all);
   }
@@ -516,11 +1130,18 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     var pc = null, done = false;
     d.onclose = function () { if (!done && pc) { try { pc.close(); } catch (e) { /* egal */ } } };
     var status = h('p', { class: 'hint' });
-    d.body.appendChild(h('p', { class: 'step', html: '<b>1.</b> Auf <b>Handy 1</b> in der Lobby (oder im Spielmenü) <b>„Mitspieler verbinden“</b> tippen. Den Code, der dort erscheint, hier scannen oder einfügen:' }));
+    d.body.appendChild(h('p', { class: 'step', html: '<b>1.</b> Auf <b>Handy 1</b> in der Lobby (oder im Spielmenü) <b>„Einladung per QR-Code“</b> tippen. Den Code, der dort erscheint, hier scannen oder einfügen:' }));
     var input = codeInput('O', useOffer);
     d.body.appendChild(input);
     d.body.appendChild(status);
     function useOffer(txt) {
+      var inv = inviteIn(txt);
+      if (inv) { // ein Einladungslink (gescannt oder eingefügt): automatisch verbinden
+        d.close();
+        openLinkJoin(inv, { title: expectCode ? '🔌 Neu verbinden' : '🔗 Einladung angenommen', expect: expectCode || null, askName: !expectCode },
+          expectCode ? onLink : function (l, off) { guestConnected(l, off, inv); });
+        return true;
+      }
       var o;
       try { o = unpack(txt); } catch (e) { status.className = 'warn'; status.textContent = 'Das ist kein gültiger Einladungs-Code.'; return false; }
       if (o.t !== 'O') { status.className = 'warn'; status.textContent = 'Das ist ein Antwort-Code. Hier wird die Einladung von Handy 1 gebraucht.'; return false; }
@@ -626,7 +1247,10 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     };
     tr.connected = function () { return !!(tr.link && !tr.link.closed); };
     tr.reconnectMenu = function () {
-      openGuestPair(code, function (l) { tr.setLink(l); Net().reconnect(); UI.toast('✓ Wieder verbunden.', 3000); });
+      function relink(l) { tr.setLink(l); Net().reconnect(); UI.toast('✓ Wieder verbunden.', 3000); }
+      function manual() { openGuestPair(code, relink); }
+      if (tr.invite && P2P.linkSupported()) openLinkJoin(tr.invite, { title: '🔌 Neu verbinden', expect: code, manual: manual }, relink);
+      else manual();
     };
     tr.invitePanel = function () {
       var box = h('div', { class: 'p2p-invite' }), shown = null;
@@ -652,14 +1276,15 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     return tr;
   }
   /** Nach dem Verbinden: dem Raum beitreten (bzw. mit gespeichertem Platz zurückkehren) */
-  function guestConnected(link, offer) {
+  function guestConnected(link, offer, invite) {
     var code = offer.code, tr = guestTransport(code, link);
     var sess = guestSessions()[code];
+    tr.invite = invite || (sess && sess.invite) || null;
     function join(body, retry) {
       return tr.api('api/rooms/' + code + '/join', body).then(function (j) {
         if (!j.ok && retry) { forgetGuest(code); return join({ name: Net().name() }, false); }
         if (!j.ok) { tr.onClosed(); UI.alert(j.error || 'Beitritt nicht möglich.'); return; }
-        saveGuest(code, j.token, j.slot);
+        saveGuest(code, j.token, j.slot, tr.invite);
         Net().open(code, j.token, j.slot, tr);
       });
     }
@@ -667,6 +1292,79 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       UI.alert('Keine Antwort von Handy 1 (' + (e && e.message) + ').');
     });
   }
+
+  /** Einladungslink folgen: Dialog mit Fortschritt; onLink(link, offer, info) bei Erfolg. opts: { title, expect, manual, askName } */
+  function openLinkJoin(invite, opts, onLink) {
+    var d = dialog(opts.title || '🔗 Einladung angenommen');
+    var status = h('p', { class: 'step' }), extra = h('div', {});
+    d.body.appendChild(status);
+    d.body.appendChild(extra);
+    if (opts.askName) {
+      var nm = h('input', { type: 'text', maxlength: '18', placeholder: 'Dein Name', value: Net().name() || '', class: 'text-in' });
+      nm.addEventListener('input', function () { Net().setName(nm.value.trim()); });
+      d.body.appendChild(h('label', { class: 'field' }, [h('span', { text: 'Dein Name' }), nm]));
+    }
+    d.body.appendChild(h('p', { class: 'hint', text: 'Das geht von selbst: Die Verbindungsdaten laufen verschlüsselt über den Dienst ntfy.sh, gespielt wird danach direkt zwischen euren Geräten.' }));
+    var job = null;
+    function say(text, warn) { status.className = warn ? 'warn' : 'step'; status.innerHTML = (warn ? '' : '<span class="dot wait"></span> ') + UI.esc(text); }
+    function run() {
+      extra.innerHTML = '';
+      say('Einladung angenommen – verbinde …');
+      var my = job = P2P.linkJoin({ invite: invite, relay: getRelay(), answer: rtcAnswer, onStep: function (t) { if (job === my && !d.closed) say(t); } });
+      my.promise.then(function (r) {
+        if (job !== my || d.closed) { r.link.close('abgebrochen'); return; }
+        job = null;
+        if (opts.expect && r.offer.code !== opts.expect) {
+          r.link.close('falscher Raum');
+          say('Dieser Link gehört zu Raum ' + r.offer.code + ', nicht zu ' + opts.expect + '.', true);
+          return;
+        }
+        d.close();
+        UI.sfx('confirm');
+        if (r.offer.lid !== logicId()) UI.toast('Achtung: Ihr habt unterschiedliche Spielversionen – am besten beide die Seite neu laden.', 7000);
+        onLink(r.link, r.offer, r.info);
+      }, function (e) {
+        if (job !== my) return;
+        job = null;
+        if (d.closed || e.kind === 'abort') return;
+        say(e.message, true);
+        extra.appendChild(h('p', { class: 'hint', text: e.kind === 'relay'
+          ? 'Ohne den Dienst geht es per QR-Code: Der Gastgeber tippt in der Lobby auf „Einladung per QR-Code“, du hier auf „Per QR-Code verbinden“.'
+          : 'Es geht auch per QR-Code: Der Gastgeber tippt in der Lobby auf „Einladung per QR-Code“.' }));
+        extra.appendChild(h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center', margin: '8px 0' } }, [
+          h('button', { class: 'btn primary', text: 'Nochmal versuchen', onclick: run }),
+          h('button', { class: 'btn', text: '📷 Per QR-Code verbinden', onclick: function () {
+            d.close();
+            if (opts.manual) opts.manual(); else openGuestPair(null, guestConnected);
+          } })
+        ]));
+      });
+    }
+    d.onclose = function () { if (job) { var j = job; job = null; j.cancel(); } };
+    run();
+  }
+  /** Einladungslink öffnen (#einladung=<code>, auch beim Start der App). opts.resume = Raumcode (nach Neuladen) */
+  P2P.joinInvite = function (invite, opts) {
+    opts = opts || {};
+    invite = String(invite || '').toLowerCase();
+    if (!validInvite(invite)) { P2P.show(); UI.alert('Dieser Einladungslink ist unvollständig – bitte nochmal schicken lassen.'); return; }
+    var why = linkProblem();
+    if (why) { P2P.show(); UI.alert(why + ' Lass dir vom Gastgeber stattdessen „Einladung per QR-Code“ zeigen und tippe hier auf „Beitreten“.'); return; }
+    function go() {
+      P2P.show();
+      openLinkJoin(invite, { title: opts.resume ? '🔌 Verbinde neu …' : '🔗 Einladung angenommen', askName: !opts.resume, expect: opts.resume || null },
+        function (link, offer) { guestConnected(link, offer, invite); });
+    }
+    var s = Net() && Net().s;
+    if (!s) { go(); return; }
+    UI.confirm('Du bist gerade in Raum ' + s.code + '. Trotzdem der Einladung folgen?').then(function (ok) {
+      if (!ok) return;
+      var st = G.Play && G.Play.state && G.Play.state();
+      if (st && st.net) G.Play.stop();
+      Net().close();
+      go();
+    });
+  };
 
   // ================================================================ Bausteine: Code anzeigen, scannen, einfügen
   function dialog(title) {
@@ -712,8 +1410,8 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
   /** Eingabe für einen Code: Kamera oder Einfügen. use(text) → true wenn angenommen */
   function codeInput(kind, use) {
     var wrap = h('div', { class: 'p2p-input' });
-    var ta = h('textarea', { class: 'text-in code-text', rows: '2', spellcheck: 'false', placeholder: kind === 'O' ? 'Einladungs-Code hier einfügen (FL1…)' : 'Antwort-Code hier einfügen (FL1…)' });
-    function tryText(t) { if (t && /FL1[A-Za-z0-9_-]{20,}/.test(t)) use(t); }
+    var ta = h('textarea', { class: 'text-in code-text', rows: '2', spellcheck: 'false', placeholder: kind === 'O' ? 'Einladungs-Code (FL1…) oder Einladungslink hier einfügen' : 'Antwort-Code hier einfügen (FL1…)' });
+    function tryText(t) { if (t && (/FL1[A-Za-z0-9_-]{20,}/.test(t) || (kind === 'O' && inviteIn(t)))) use(t); }
     ta.addEventListener('input', function () { tryText(ta.value); });
     var row = h('div', { class: 'row' });
     row.appendChild(h('button', { class: 'btn primary', text: '📷 Scannen', onclick: function () {
@@ -797,7 +1495,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
             if (done) return;
             timer = setTimeout(function () {
               dec(video).then(function (t) {
-                if (t && /FL1/.test(t)) { UI.sfx('confirm'); finish(t); }
+                if (t && (/FL1/.test(t) || inviteIn(t))) { UI.sfx('confirm'); finish(t); }
                 else if (t) { info.textContent = 'Das ist kein FRONTLINIE-Code. Bitte den Code aus „Handy zu Handy“ scannen.'; loop(); }
                 else loop();
               }, function () { loop(); });
@@ -826,11 +1524,17 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
         Net().setName(nm.value.trim());
         return true;
       }
+      var why = linkProblem();
       panel.appendChild(h('div', { class: 'big-choices' }, [
-        h('button', { class: 'btn primary big', onclick: function () { if (named()) UI.showSkirmish({ p2p: true }); } }, [
-          h('b', { text: 'Spiel eröffnen' }), h('small', { text: 'Du bist Gastgeber: Karte wählen, dann Handy 2 einladen' })]),
+        h('button', { class: 'btn primary big', onclick: function () {
+          if (why) { UI.alert(why + ' Bis dahin: „Spiel eröffnen (ohne Internet)“ mit QR-Codes.'); return; }
+          if (named()) { wantLink = true; UI.showSkirmish({ p2p: true }); }
+        } }, [
+          h('b', { text: '🔗 Einladungslink erstellen' }), h('small', { text: why ? 'Geht hier nicht – antippen für den Grund' : 'Karte wählen, dann den Link an Freunde schicken – sie tippen ihn nur an' })]),
+        h('button', { class: 'btn big', onclick: function () { if (named()) { wantLink = false; UI.showSkirmish({ p2p: true }); } } }, [
+          h('b', { text: 'Spiel eröffnen (ohne Internet)' }), h('small', { text: 'Einladung per QR-Code – z. B. im selben WLAN oder Hotspot' })]),
         h('button', { class: 'btn big', onclick: function () { if (named()) openGuestPair(null, guestConnected); } }, [
-          h('b', { text: 'Beitreten' }), h('small', { text: 'Einladung von Handy 1 scannen oder einfügen' })])
+          h('b', { text: 'Beitreten' }), h('small', { text: 'Code von Handy 1 scannen oder einfügen (Einladungslinks einfach antippen)' })])
       ]));
       // Am PC: QR-Code, mit dem beide Handys das Spiel (neueste Version) bekommen
       var pcBox = null, pcKey = '', pcTimer = null;
@@ -892,14 +1596,16 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       }
       wrap.appendChild(h('div', { class: 'panel p2p-help', html:
         '<h3>So geht’s</h3><ol class="steps">' +
-        '<li><b>Handy 1</b>: „Spiel eröffnen“ → Karte wählen (Platz 2 = „Mitspieler (Netz)“) → „Raum eröffnen“ → <b>„Einladung zeigen“</b>.</li>' +
-        '<li><b>Handy 2</b>: „Beitreten“ → <b>„Scannen“</b> und die Kamera auf den Code von Handy 1 halten. Handy 2 zeigt danach einen Antwort-Code.</li>' +
-        '<li><b>Handy 1</b>: bei „Antwort“ auf <b>„Scannen“</b> tippen und den Code von Handy 2 scannen → verbunden.</li>' +
-        '<li>Handy 1 tippt auf <b>„Spiel starten“</b>.</li></ol>' +
-        '<p class="hint">Statt zu scannen könnt ihr die Codes auch per Nachricht schicken („Teilen“) und einfügen. ' +
-        'Am zuverlässigsten klappt es im <b>selben WLAN</b> oder wenn Handy 2 im <b>Hotspot</b> von Handy 1 ist – ganz ohne Internet. ' +
-        'Über Mobilfunk an verschiedenen Orten klappt es nur manchmal. Handy 1 ist der Gastgeber und muss während des Spiels an bleiben. ' +
-        'Reißt die Verbindung ab: im Spielmenü „Mitspieler verbinden“ (Handy 1) bzw. „Neu verbinden“ (Handy 2).</p>' }));
+        '<li><b>Gastgeber</b>: „Einladungslink erstellen“ → Karte wählen (Plätze für Freunde = „Mitspieler (Netz)“) → „Raum eröffnen“.</li>' +
+        '<li>Den Link mit <b>„Teilen“</b> per Messenger schicken – oder den QR-Code mit der Kamera scannen lassen.</li>' +
+        '<li><b>Freunde</b> tippen den Link an: Das Spiel öffnet sich und verbindet sich von selbst mit der Lobby.</li>' +
+        '<li>Der Gastgeber tippt auf <b>„Spiel starten“</b>.</li></ol>' +
+        '<p class="hint">Der Link läuft über den kostenlosen Dienst ntfy.sh – nur zum Verbinden und verschlüsselt; gespielt wird direkt zwischen den Geräten. ' +
+        'Die Partie läuft, solange die Verbindung steht: Der Gastgeber muss FRONTLINIE offen und den Bildschirm an lassen. ' +
+        'Reißt die Verbindung ab, einfach den Link nochmal antippen (bzw. Spielmenü → „Neu verbinden“). ' +
+        'Zwischen manchen Mobilfunknetzen klappt keine Direktverbindung – dann hilft dasselbe WLAN oder der Hotspot des Gastgebers.</p>' +
+        '<p class="hint"><b>Ohne Internet</b>: „Spiel eröffnen (ohne Internet)“ → in der Lobby „Einladung per QR-Code“; Handy 2 tippt „Beitreten“ → „Scannen“ ' +
+        'und zeigt danach einen Antwort-Code, den Handy 1 scannt. Am zuverlässigsten im selben WLAN oder im Hotspot von Handy 1.</p>' }));
       wrap.appendChild(h('div', { class: 'actions' }, [h('button', { class: 'btn', text: 'Zurück', onclick: function () { UI.sfx('cancel'); UI.showTitle(); } })]));
       return { cleanup: function () { clearInterval(pcTimer); }, onAction: function (a) { if (a === 'b') UI.showTitle(); return true; } };
     });
@@ -908,9 +1614,12 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
   P2P.resume = function (code) {
     code = String(code || '').toUpperCase();
     if ((hub && hub.rooms.get(code)) || Store.get('p2p:room:' + code, null)) { openHostRoom(code); return; }
+    var gs = guestSessions()[code];
+    if (gs && validInvite(gs.invite) && P2P.linkSupported() && Date.now() - gs.at < 12 * 3600 * 1000) { P2P.joinInvite(gs.invite, { resume: code }); return; }
     P2P.show();
-    if (guestSessions()[code]) UI.toast('Raum ' + code + ': Lass dir von Handy 1 eine neue Einladung zeigen → „Beitreten“.', 7000);
+    if (gs) UI.toast('Raum ' + code + ': Lass dir von Handy 1 eine neue Einladung zeigen → „Beitreten“.', 7000);
   };
   // Für Tests
-  P2P._test = { Link: Link, FakeES: FakeES, hostTransport: hostTransport, guestTransport: guestTransport, attachPeer: attachPeer, getHub: getHub, guestConnected: guestConnected, gather: gather, STUN: STUN };
+  P2P._test = { Link: Link, FakeES: FakeES, hostTransport: hostTransport, guestTransport: guestTransport, attachPeer: attachPeer, getHub: getHub, guestConnected: guestConnected, gather: gather, STUN: STUN,
+    rtcOffer: rtcOffer, rtcAnswer: rtcAnswer, startLink: startLink, stopLink: stopLink, linkHosts: linkHosts, linkUrl: linkUrl, openLinkJoin: openLinkJoin, peers: function () { return peers; } };
 })();
