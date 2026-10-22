@@ -23,7 +23,7 @@
 //                        (search: {u, v, v3} als [von, bis], hqRange: [min, max] Zielbereich der HQ-Wege)
 //   center: [u, v]       Mittelpunkt des Mitte-Clusters (Standard: Kartenmitte)
 //   mid: {K, A, O, C}    Bahnen im Mitte-Cluster (Standard {K: 1, A: 1, O: 1, C: 2})
-//   expand: n            Expansionsstädte je HQ (Standard 4)
+//   expand: n            Expansionsstädte je HQ (Standard 4); expandNear: [a, b] Abstandsband der ersten (Standard [4, 6])
 //   forward: [a, b] | 0  Band der Vorposten-Fabrik relativ zum HQ-Abstand (Standard [0.35, 0.5]); side: s seitlicher
 //                        Versatz relativ zum HQ-Abstand (Standard 0.2)
 //   density: n           Zieldichte: ein Gebäude je n Landfelder (Standard 21)
@@ -31,6 +31,10 @@
 //   ports: n             Häfen je Spieler (Standard 1)
 //   seaBridges: true     Straßen dürfen Meer überbrücken (bridge: Kosten je Meerfeld, Standard 9)
 //   ridges: true         Gebirgsketten an Ober- und Unterkante (Langes Tal)
+//   crest: n             Gebirgskamm senkrecht durch die Kartenmitte (halbe Breite n Felder); Lücken entstehen dort, wo das
+//                        Bergrauschen niedrig ist, den Rest überqueren die Straßen als Pässe
+//   shape: 'carved', carve: [...]  Kontinent mit ausgeschnittenen Gewässern (Kreise/Kapseln wie bei islands, gespiegelt):
+//                        Buchten am Rand, Seen im Inneren
 //   shape: 'archipel', islands: [...]  Inselgruppe aus Kreisen/Kapseln (Feldkoordinaten, werden gespiegelt)
 //   archipelago: true    Inselkarte: Landflecken bereinigen, Heimatgebäude nur auf der HQ-Insel (erster Hafen zur
 //                        Mittelinsel), Vorposten auf einem Eiland, Mitte auf der größten neutralen Insel, jede neutrale
@@ -149,8 +153,17 @@ const SHAPES = {
   },
   // Archipel: Vereinigung der in def.islands angegebenen Kreise/Kapseln (Feldkoordinaten), über die
   // Symmetriegruppe vervielfältigt. Maßstab: 25 Felder ≙ 1, damit das Küstenrauschen ±1,5 Felder ausmacht.
-  archipel: (u, v, def) => islandField(def)(u * (def.w - 1), v * (def.h - 1)) / 25
+  archipel: (u, v, def) => islandField(def)(u * (def.w - 1), v * (def.h - 1)) / 25,
+  // Kontinent mit ausgeschnittenen Buchten/Seen aus def.carve (Feldkoordinaten, gleicher Maßstab wie archipel)
+  carved: (u, v, def) => Math.max(SHAPES.continent(u, v), -carveField(def)(u * (def.w - 1), v * (def.h - 1)) / 25)
 };
+// Abstandsfeld der Ausschnitte von 'carved' (<0 innerhalb eines Ausschnitts), je Definition zwischengespeichert
+const carveCache = new WeakMap();
+function carveField(def) {
+  let f = carveCache.get(def);
+  if (!f) { f = islandField({ sym: def.sym, w: def.w, h: def.h, islands: def.carve }); carveCache.set(def, f); }
+  return f;
+}
 
 // Insel-Landformen: {x, y, r} Kreis, {x, y, x2, y2, r} Kapsel (Strecke mit Radius), cut: true schneidet Wasser aus
 // (Buchten). Rückgabe: vorzeichenbehafteter Abstand in Feldern (<0 Land).
@@ -208,6 +221,22 @@ function landComponents(T, w, h) {
 const DEFS = [
   { id: 'grenzland', theme: 'sommer', name: 'Grenzland', players: 2, w: 30, h: 30, shape: 'continent', sym: 'rot2', anchor: [0.2, 0.22], seed: 11,
     lakes: 0.03, forest: 0.2, mountain: 0.06, rivers: 2, desc: 'Kompakte Karte für schnelle Duelle: ein Kontinent mit Flüssen, Seen und Städten.' },
+  // ---- Schnelle Duelle 30×30: HQ-Fußweg 26–30, erste neutrale Stadt 3–4 Felder vor dem HQ, dichte Bebauung, wenig Hindernisse
+  { id: 'flussgabel', theme: 'sommer', name: 'Flussgabel', players: 2, w: 30, h: 30, shape: 'continent', sym: 'rot2', anchor: [0.24, 0.3], seed: 211,
+    lakes: 0.01, forest: 0.1, mountain: 0.04, rivers: 3, density: 16, expandNear: [3, 4],
+    desc: 'Schnelles Duell: offenes Land mit kurzen Wegen, an beiden Flanken gabeln sich Flüsse zur Küste. Wer die freie Mitte zuerst besetzt, gibt das Tempo vor.' },
+  { id: 'ahornbucht', theme: 'herbst', name: 'Ahornbucht', players: 2, w: 30, h: 30, shape: 'carved', sym: 'mirrorX', anchor: [0.12, 0.42], seed: 301,
+    carve: [{ x: -5, y: -3, x2: 34, y2: -3, r: 5 },                         // Küste im Norden
+      { x: 14.5, y: 1, x2: 14.5, y2: 11, r: 3.5 }, { x: 14.5, y: 3, r: 6 }], // tiefe Bucht zwischen den HQs
+    lakes: 0, forest: 0.11, mountain: 0.04, rivers: 1, density: 15, expandNear: [3, 4],
+    desc: 'Schnelles Duell: Eine tiefe Bucht trennt die beiden Heere. An ihrer Spitze warten Fabriken, Flughäfen und Häfen – dort fällt die Entscheidung.' },
+  { id: 'seenkreuz', theme: 'winter', name: 'Seenkreuz', players: 2, w: 30, h: 30, shape: 'carved', sym: 'rot2', anchor: [0.26, 0.26], seed: 403,
+    carve: [{ x: 14.5, y: 8, r: 3 }, { x: 8, y: 14.5, r: 3 }],             // vier Seen um die Kartenmitte (gedreht)
+    lakes: 0.02, forest: 0.11, mountain: 0.03, rivers: 1, density: 15, expand: 3, expandNear: [3, 4],
+    desc: 'Schnelles Duell: Vier Seen umrahmen die Kreuzung in der Mitte, wo Fabriken und Flughäfen warten. Zwischen den Ufern führen kurze Wege direkt zum Gegner.' },
+  { id: 'bergpass', theme: 'gebirge', name: 'Bergpass', players: 2, w: 30, h: 30, shape: 'continent', sym: 'rot2', anchor: [0.15, 0.38], seed: 503,
+    crest: 4, lakes: 0.01, forest: 0.1, mountain: 0.11, rivers: 1, density: 16, expandNear: [3, 4],
+    desc: 'Schnelles Duell: Ein Gebirgskamm teilt das Land von Nord nach Süd. Durch den Pass in der Mitte mit Fabriken und Flughäfen führt der kürzeste Weg zum Gegner.' },
   { id: 'langes-tal', theme: 'gebirge', name: 'Langes Tal', players: 2, w: 54, h: 30, shape: 'long', sym: 'rot2', anchor: [0.16, 0.5], seed: 23,
     lakes: 0.02, forest: 0.2, mountain: 0.1, rivers: 2, ridges: true, desc: 'Ein langes Tal zwischen zwei Gebirgsketten. Straßen entscheiden das Tempo.' },
   { id: 'rundinsel', theme: 'sommer', name: 'Rundinsel', players: 2, w: 45, h: 45, shape: 'round', sym: 'rot2', anchor: [0.27, 0.3], seed: 37,
@@ -364,6 +393,8 @@ function generate(def) {
     const x = i % w, y = (i - x) / w;
     ridgeF[i] = mountN[i];
     if (def.ridges) { const v = y / (h - 1); ridgeF[i] += Math.max(0, 0.3 - Math.min(v, 1 - v) * 2) * 1.5; }
+    // Kamm durch die Mitte: Aufschlag nimmt zur Mittellinie hin zu und wächst mit dem Rauschen (dort, wo es niedrig ist, bleiben Lücken)
+    if (def.crest) ridgeF[i] += Math.max(0, 1 - Math.abs(x - (w - 1) / 2) / def.crest) * mountN[i] * 1.2;
   }
   const mThr = quantile(ridgeF, 1 - def.mountain), fThr = quantile(forestN, 1 - def.forest), lThr = quantile(lakeN, 1 - def.lakes);
   for (let i = 0; i < N; i++) {
@@ -659,12 +690,13 @@ function generate(def) {
     if (nc < 4) place('C', pl, 4 - nc, { home: a, dMin: 2, dMax: 9, filter: isle });
   });
 
-  // 5b) Expansionsstädte: neutrale Städte 4–9 Felder ums HQ für frühe Einnahmen (die erste höchstens 6 entfernt);
-  // auf Inselkarten nur auf der Heimatinsel
+  // 5b) Expansionsstädte: neutrale Städte 4–9 Felder ums HQ für frühe Einnahmen (die erste höchstens 6 entfernt bzw. im
+  // Band def.expandNear); auf Inselkarten nur auf der Heimatinsel
   const nExp = def.expand != null ? def.expand : 4;
   homes.forEach(a => {
     const sameIsland = isleOf(a);
-    let n = place('C', 0, Math.min(1, nExp), { home: a, dMin: 4, dMax: 6, sep: 3, partial: true, filter: sameIsland });
+    const en = def.expandNear || [4, 6];
+    let n = place('C', 0, Math.min(1, nExp), { home: a, dMin: en[0], dMax: en[1], sep: 3, partial: true, filter: sameIsland });
     if (!n && a === a3 && nExp >= 2) n = place('C', 0, 2, { home: a, dMin: 4, dMax: 6, sep: 3, filter: sameIsland }); // Achse belegt: Paar
     n += place('C', 0, nExp - n, { home: a, dMin: 4, dMax: 9, sep: 3, partial: true, filter: sameIsland });
   });
