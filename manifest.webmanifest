@@ -1,0 +1,18 @@
+{
+  "name": "FRONTLINIE",
+  "short_name": "FRONTLINIE",
+  "description": "Rundenbasiertes Taktikspiel im Taschenformat – spielbar ohne Internet.",
+  "lang": "de",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#1a1f15",
+  "theme_color": "#1a1f15",
+  "categories": ["games"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

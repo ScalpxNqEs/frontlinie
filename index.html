@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>FRONTLINIE</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1a1f15">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FRONTLINIE">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 0h14v14l-2 2H0V2z' fill='%232a3122'/%3E%3Cpath d='M1 1h14v13l-1 1H1z' fill='none' stroke='%238e9a74'/%3E%3Cpath d='M3 10h10v2H3z' fill='%23ff7a1a'/%3E%3Cpath d='M5 6h6v3H5z' fill='%23efe7cf'/%3E%3Cpath d='M9 7h5v1H9z' fill='%23efe7cf'/%3E%3C/svg%3E">
+</head>
+<body>
+<div id="app">
+  <canvas id="map"></canvas>
+  <div id="hud" class="hidden">
+    <div id="hud-player" class="panel"></div>
+    <div id="hud-info" class="hud-bottom"></div>
+    <div id="hud-forecast" class="panel hidden"></div>
+    <div id="hud-buttons">
+      <button id="btn-back" class="hidden" title="Zurück (Esc / rechte Maustaste)">↩</button>
+      <button id="btn-chat" class="hidden" title="Nachricht an Mitspieler">💬</button>
+      <button id="btn-eye" title="Gegner-Sicht an/aus (V)">👁</button>
+      <button id="btn-menu" title="Menü (Esc / M-Taste rechts)">☰</button>
+      <button id="btn-end" title="Runde beenden (E)">Ende</button>
+    </div>
+    <div id="hud-side">
+      <button id="btn-next" title="Nächste bereite Einheit (N)"><span class="ico">⏭</span><span class="lbl">Nächste</span></button>
+      <button id="btn-pick" title="Auswählen / bestätigen (Enter)"><span class="ico">✔</span><span class="lbl">Wählen</span></button>
+    </div>
+    <div id="plan-bar" class="hidden"></div>
+  </div>
+  <div id="screens"></div>
+  <div id="overlay"></div>
+  <div id="toast"></div>
+</div>
+<noscript>FRONTLINIE braucht JavaScript.</noscript>
+<script src="js/data.js"></script>
+<script src="js/maps.js"></script>
+<script src="js/campaign.js"></script>
+<script src="js/game.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/room.js"></script>
+<script src="js/sprites.js"></script>
+<script src="js/sprites-extra.js"></script>
+<script src="js/render.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/play.js"></script>
+<script src="js/qr.js"></script>
+<script src="js/online.js"></script>
+<script src="js/p2p.js"></script>
+<script src="js/app.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
