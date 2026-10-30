@@ -24,6 +24,7 @@ jobs:
         run: |
           node tests/core.test.js
           node tests/undo.test.js
+          node tests/random.test.js
           node tests/net.test.js
           node tests/p2p.test.js
       - name: Statische Fassung bauen (dist/)

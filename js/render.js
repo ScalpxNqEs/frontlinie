@@ -194,6 +194,19 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
   R.portrait = function (coId, faction) {
     var key = 'p|' + coId + '|' + faction;
     if (R.cache[key]) return R.cache[key];
+    if (coId === 'random') {
+      // Zufalls-Kommandant: Silhouette in Teamfarbe mit großem Fragezeichen
+      var rc = mkCanvas(96, 96), rx = rc.getContext('2d'), tc = teamColors(faction || 'neutral');
+      var gr = rx.createLinearGradient(0, 0, 0, 96); gr.addColorStop(0, '#3b4a5c'); gr.addColorStop(1, '#1b232c');
+      rx.fillStyle = gr; rx.fillRect(0, 0, 96, 96);
+      rx.fillStyle = tc[1]; rx.beginPath(); rx.ellipse(48, 100, 34, 30, 0, Math.PI, 0); rx.fill();
+      rx.fillStyle = 'rgba(0,0,0,0.35)'; rx.beginPath(); rx.arc(48, 40, 19, 0, Math.PI * 2); rx.fill();
+      rx.font = '900 46px sans-serif'; rx.textAlign = 'center'; rx.textBaseline = 'middle';
+      rx.lineWidth = 5; rx.strokeStyle = '#141710'; rx.strokeText('?', 48, 42);
+      rx.fillStyle = '#ffc233'; rx.fillText('?', 48, 42);
+      R.cache[key] = rc;
+      return rc;
+    }
     var spr = G.SPRITES && G.SPRITES.portraits && G.SPRITES.portraits[coId];
     var c;
     if (spr) c = rasterToCanvas(spr, teamColors(faction || (G.COS[coId] && G.COS[coId].faction) || 'neutral'));

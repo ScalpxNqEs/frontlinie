@@ -213,6 +213,17 @@ async function main() {
     const srvState = await api('api/rooms/' + host.code + '/state?token=' + host.token);
     ok(srvState.ok && srvState.hash === A.game.stateHash(), 'Server-Zustand stimmt mit den Browsern überein');
 
+    console.log('Netzwerk: Zufalls-Kommandant');
+    const rsetup = Object.assign({}, setup, { seats: [{ slot: 1, faction: 'red', co: 'random', team: 1, control: 'host' }, { slot: 2, faction: 'blue', co: 'random', team: 2, control: 'ai:leicht' }] });
+    const rh = await api('api/rooms', { setup: rsetup, name: 'Zufall' });
+    ok(rh.ok, 'Raum mit „Zufall“ wird angenommen');
+    const rl = await api('api/rooms/' + rh.code);
+    ok(rl.seats.every(x => x.co === 'random'), 'Lobby zeigt „Zufall“ bis zum Start');
+    await api('api/rooms/' + rh.code + '/start', { token: rh.token });
+    const rst = await api('api/rooms/' + rh.code + '/state?token=' + rh.token);
+    const rg = rst.ok && G.Game.load(rst.state);
+    ok(rg && rg.players.every(p => G.COS[p.co]) && rg.players[0].co !== rg.players[1].co, 'Beim Start ausgelost: ' + (rg ? rg.players.map(p => p.co).join(' gegen ') : '?'));
+
     console.log('Netzwerk: Wiederverbindung');
     B.s.close();
     // A spielt weiter, B verpasst Befehle

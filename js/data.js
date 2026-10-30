@@ -477,6 +477,27 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     return f;
   };
   /** Wirksamer Kommandant eines Spielers: Fusion, wenn ein gültiger zweiter CO (≠ erster) gesetzt ist, sonst der einzelne */
+  // ---- Zufalls-Kommandant: Platzhalter 'random' in der Auswahl, wird beim Spielstart aufgelöst
+  G.RANDOM_CO = 'random';
+  /** Gültige Auswahl für einen Platz: echter Kommandant oder Zufall */
+  G.isCoChoice = function (id) { return id === G.RANDOM_CO || !!G.COS[id]; };
+  /**
+   * Ersetzt co: 'random' durch einen echten Kommandanten – bevorzugt einen, den noch kein anderer Platz führt
+   * (auch nicht als Fusionspartner). rand() liefert 0…1 (Standard Math.random). Ändert players direkt und gibt es zurück.
+   */
+  G.resolveRandomCOs = function (players, rand) {
+    rand = rand || Math.random;
+    var used = {};
+    players.forEach(function (p) { if (G.COS[p.co]) used[p.co] = 1; if (p.co2 && G.COS[p.co2]) used[p.co2] = 1; });
+    players.forEach(function (p) {
+      if (p.co !== G.RANDOM_CO) return;
+      var pool = G.CO_ORDER.filter(function (id) { return !used[id] && id !== p.co2; });
+      if (!pool.length) pool = G.CO_ORDER.filter(function (id) { return id !== p.co2; });
+      p.co = pool[Math.floor(rand() * pool.length) % pool.length];
+      used[p.co] = 1;
+    });
+    return players;
+  };
   G.coFor = function (player) {
     if (!player) return null;
     return player.co2 && G.COS[player.co2] && player.co2 !== player.co ? G.fuseCOs(player.co, player.co2) : G.COS[player.co];

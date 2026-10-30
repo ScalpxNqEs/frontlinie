@@ -31,7 +31,9 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     st.scale = 3;
     var prevSlotFaction = R.slotFaction;
     R.slotFaction = function (slot) { return slot ? G.FACTION_ORDER[slot - 1] : 'neutral'; };
-    var layer, canvas, ctx, scroller, toolButtons = [];
+    var layer, canvas, ctx, scroller, toolButtons = [], themeCyc = null;
+    // Einstellungen des Zufallsgenerators (bleiben für „Nochmal“ erhalten)
+    var rnd = UI.Store.get('editor:random', { players: 2, size: 'klein', form: 'zufall', theme: 'zufall' });
     var undo = [];
 
     UI.screen('', function (wrap, el) {
@@ -42,6 +44,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       var nameIn = h('input', { value: st.name, maxlength: 32, oninput: function () { st.name = nameIn.value; } });
       top.appendChild(nameIn);
       top.appendChild(h('button', { class: 'btn', text: 'Neu', onclick: newMap }));
+      top.appendChild(h('button', { class: 'btn primary', text: '🎲 Zufallskarte', title: 'Faire, symmetrische Karte erzeugen lassen', onclick: randomMap }));
       top.appendChild(h('button', { class: 'btn', text: 'Öffnen', onclick: openMap }));
       top.appendChild(h('button', { class: 'btn primary', text: 'Speichern', onclick: saveMap }));
       top.appendChild(h('button', { class: 'btn', text: 'Testspiel', onclick: testPlay }));
@@ -77,7 +80,8 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       g4.appendChild(UI.cycler(['off', 'h', 'v', 'rot'], 0, function (v) { st.sym = v; }, function (v) { return { off: 'Aus', h: 'Spiegel ↔', v: 'Spiegel ↕', rot: 'Drehung 180°' }[v]; }));
       var THEMES = Object.keys(G.THEMES);
       g4.appendChild(h('label', { text: 'Landschaft' }));
-      g4.appendChild(UI.cycler(THEMES, Math.max(0, THEMES.indexOf(st.theme)), function (v) { st.theme = v; R.setTheme(v); refreshTools(); draw(); }, function (v) { return G.THEMES[v]; }));
+      themeCyc = UI.cycler(THEMES, Math.max(0, THEMES.indexOf(st.theme)), function (v) { st.theme = v; R.setTheme(v); refreshTools(); draw(); }, function (v) { return G.THEMES[v]; });
+      g4.appendChild(themeCyc);
       g4.appendChild(h('label', { text: 'Zoom' }));
       g4.appendChild(UI.cycler([1, 2, 3, 4, 5], 2, function (v) { st.scale = v; draw(); }, function (v) { return v + '×'; }));
       bar.appendChild(g4);
@@ -277,6 +281,42 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
           draw();
         },
         onCancel: function () {}
+      });
+    }
+    /** Zufallskarte: Spieler, Größe, Landform, Landschaft wählen → faire, symmetrische Karte (js/mapgen.js) */
+    function randomMap() {
+      var MG = G.MapGen;
+      if (!MG || !MG.random) { UI.toast('Generator nicht geladen.'); return; }
+      var body = h('div', { class: 'opts', style: { marginTop: '0' } });
+      function opt(label, el) { body.appendChild(h('div', { class: 'opt' }, [h('span', { text: label }), el])); }
+      var formCyc = null, formBox = h('span');
+      function formValues() { return ['zufall'].concat(Object.keys(MG.random.FORMS).filter(function (k) { return MG.random.FORMS[k].p.indexOf(rnd.players) >= 0; })); }
+      function renderForm() {
+        var vals = formValues();
+        if (vals.indexOf(rnd.form) < 0) rnd.form = 'zufall';
+        formCyc = UI.cycler(vals, vals.indexOf(rnd.form), function (v) { rnd.form = v; }, function (v) { return v === 'zufall' ? '🎲 Zufall' : MG.random.FORMS[v].name; });
+        formBox.innerHTML = ''; formBox.appendChild(formCyc);
+      }
+      opt('Spieler', UI.cycler([2, 4], rnd.players === 4 ? 1 : 0, function (v) { rnd.players = v; renderForm(); }, function (v) { return v + ' Spieler'; }));
+      opt('Größe', UI.cycler(['klein', 'mittel', 'gross'], Math.max(0, ['klein', 'mittel', 'gross'].indexOf(rnd.size)), function (v) { rnd.size = v; }, function (v) { return MG.random.SIZES[v].name; }));
+      opt('Landform', formBox);
+      opt('Landschaft', UI.cycler(['zufall'].concat(Object.keys(G.THEMES)), Math.max(0, ['zufall'].concat(Object.keys(G.THEMES)).indexOf(rnd.theme)), function (v) { rnd.theme = v; }, function (v) { return v === 'zufall' ? '🎲 Zufall' : G.THEMES[v]; }));
+      renderForm();
+      var content = h('div', {}, [h('p', { class: 'hint', text: 'Jede Karte ist punkt- bzw. drehsymmetrisch und wird auf Fairness geprüft: gleiche Gebäude und gleich lange Wege für alle Spieler. Danach kannst du sie bearbeiten, speichern und im Gefecht spielen.' }), body]);
+      UI.sheet('🎲 Zufallskarte', content, [{ label: 'Abbrechen', value: null }, { label: 'Erzeugen', value: 'go', primary: true }]).then(function (v) {
+        if (v !== 'go') return;
+        UI.Store.set('editor:random', rnd);
+        var m;
+        try { m = MG.random({ players: rnd.players, size: rnd.size, form: rnd.form, theme: rnd.theme }); }
+        catch (e) { UI.sfx('error'); UI.toast('Keine faire Karte gefunden – bitte nochmal versuchen.'); return; }
+        var s = fromDef(m);
+        snapshot();
+        st.map = s.map; st.units = []; st.id = null; st.name = m.name; st.desc = m.desc;
+        st.theme = m.theme; R.setTheme(st.theme); if (themeCyc) themeCyc.set(st.theme); refreshTools();
+        var inp = document.querySelector('.editor-top input'); if (inp) inp.value = st.name;
+        draw();
+        UI.sfx('confirm');
+        UI.toast(m.desc.replace(/^Zufallskarte: /, '') + ' – „Speichern“, dann im Gefecht unter „Eigene Karten“.', 4500);
       });
     }
     function openMap() {

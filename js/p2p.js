@@ -1396,7 +1396,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     ta.addEventListener('focus', function () { ta.select(); });
     wrap.appendChild(ta);
     var row = h('div', { class: 'row' });
-    var msg = (kind === 'O' ? 'FRONTLINIE-Einladung – in FRONTLINIE „Handy zu Handy“ → „Beitreten“ → „Code einfügen“:\n' : 'FRONTLINIE-Antwort – auf Handy 1 bei „Antwort“ einfügen:\n') + text;
+    var msg = (kind === 'O' ? 'FRONTLINIE-Einladung – in FRONTLINIE „Mit Freunden spielen“ → „Beitreten“ → „Code einfügen“:\n' : 'FRONTLINIE-Antwort – auf Handy 1 bei „Antwort“ einfügen:\n') + text;
     if (navigator.share) row.appendChild(h('button', { class: 'btn', text: 'Teilen …', onclick: function () { navigator.share({ text: msg }).catch(function () {}); } }));
     row.appendChild(h('button', { class: 'btn', text: 'Kopieren', onclick: function () { copyText(text, ta); } }));
     wrap.appendChild(row);
@@ -1496,7 +1496,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
             timer = setTimeout(function () {
               dec(video).then(function (t) {
                 if (t && (/FL1/.test(t) || inviteIn(t))) { UI.sfx('confirm'); finish(t); }
-                else if (t) { info.textContent = 'Das ist kein FRONTLINIE-Code. Bitte den Code aus „Handy zu Handy“ scannen.'; loop(); }
+                else if (t) { info.textContent = 'Das ist kein FRONTLINIE-Code. Bitte den Code aus „Mit Freunden spielen“ scannen.'; loop(); }
                 else loop();
               }, function () { loop(); });
             }, 200);
@@ -1514,7 +1514,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
   P2P.show = function () {
     UI.music('menu');
     UI.screen('online p2p', function (wrap) {
-      wrap.appendChild(h('h2', { text: 'HANDY ZU HANDY' }));
+      wrap.appendChild(h('h2', { text: 'MIT FREUNDEN SPIELEN' }));
       var panel = h('div', { class: 'panel online-menu' });
       var nm = h('input', { type: 'text', maxlength: '18', placeholder: 'Dein Name', value: Net().name() || '', class: 'text-in' });
       nm.addEventListener('change', function () { Net().setName(nm.value.trim()); });

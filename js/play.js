@@ -889,7 +889,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       for (var i = 0; i < list.length; i++) if (after(list[i])) { idx = i; break; }
     }
     UI.sfx('cursor');
-    setCursor(list[idx].x, list[idx].y);
+    centerOn(list[idx], false);   // Einheit/Gebäude in die Bildmitte holen (weich), Cursor darauf
   }
   function nextReady(dir) {
     var g = S.game, list = g.readyUnits(g.currentPlayer().slot);
@@ -1723,7 +1723,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
             break;
           case 'quit':
             if (S.net) {
-              UI.confirm(S.net.tr ? 'Spiel verlassen? Ihr könnt später über „Handy zu Handy“ → „Deine Spiele“ weiterspielen.' : 'Spiel verlassen? Du kannst später über „Online-Gefecht“ wieder einsteigen.').then(function (ok) {
+              UI.confirm(S.net.tr ? 'Spiel verlassen? Ihr könnt später über „Mit Freunden spielen“ → „Deine Spiele“ weiterspielen.' : 'Spiel verlassen? Du kannst später über „Online-Gefecht“ wieder einsteigen.').then(function (ok) {
                 if (ok) { G.Net.leave(false); P.stop(); UI.showTitle(); }
               });
               break;
@@ -1942,7 +1942,8 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     if (!isHumanTurn() || S.busy) return;
     var ready = g.readyUnits(g.currentPlayer().slot).length;
     if (force || (UI.settings.confirmEnd && ready > 0)) {
-      var ok = await UI.confirm(ready > 0 ? 'Runde beenden? ' + ready + ' Einheit' + (ready === 1 ? '' : 'en') + ' noch bereit.' : 'Runde beenden?', 'Beenden', 'Weiter');
+      // Alle Einheiten fertig: „Beenden“ vorausgewählt – der OK-Knopf unten rechts bestätigt sofort
+      var ok = await UI.confirm(ready > 0 ? 'Runde beenden? ' + ready + ' Einheit' + (ready === 1 ? '' : 'en') + ' noch bereit.' : 'Runde beenden?', 'Beenden', 'Weiter', ready === 0);
       if (!ok) return;
     }
     await endTurnFlow(true);

@@ -31,7 +31,7 @@ Danach startet FRONTLINIE vom Startbildschirm – ohne PC und ohne Internet (Kam
 
 ## Einladungslink / Handy zu Handy
 Zwei bis vier Geräte spielen direkt miteinander – kostenlos, ohne eigenen Server, ohne Konto. Am einfachsten per **Einladungslink**:
-1. **Gastgeber:** Titelmenü **Handy zu Handy → Einladungslink erstellen**, Karte wählen (Plätze für Freunde = „Mitspieler (Netz)“)
+1. **Gastgeber:** Titelmenü **Mit Freunden spielen → Einladungslink erstellen**, Karte wählen (Plätze für Freunde = „Mitspieler (Netz)“)
    → „Raum eröffnen“. In der Lobby erscheint der Link (`…/#einladung=<code>`) als QR-Code und als Text, mit **Teilen** und **Kopieren**.
 2. Den Link per Messenger schicken – oder den QR-Code mit der Kamera scannen lassen.
 3. **Freunde tippen nur den Link an:** Das Spiel öffnet sich (im Browser oder in der installierten App) und verbindet sich von selbst
@@ -56,8 +56,8 @@ Adressermittlung). Nach jedem Beitritt stellt der Gastgeber sofort ein neues Ang
   über `P2P.relayFactory` lässt sich ein ganz anderer Dienst (z. B. MQTT) einsetzen.
 
 **Ersatzweg ohne Internet (Codes per QR):**
-1. **Handy 1:** **Handy zu Handy → Spiel eröffnen (ohne Internet)**, Karte wählen → „Raum eröffnen“ → **„Einladung per QR-Code“**.
-2. **Handy 2:** **Handy zu Handy → Beitreten → Scannen** und den QR-Code von Handy 1 scannen. Handy 2 zeigt einen Antwort-Code.
+1. **Handy 1:** **Mit Freunden spielen → Spiel eröffnen (ohne Internet)**, Karte wählen → „Raum eröffnen“ → **„Einladung per QR-Code“**.
+2. **Handy 2:** **Mit Freunden spielen → Beitreten → Scannen** und den QR-Code von Handy 1 scannen. Handy 2 zeigt einen Antwort-Code.
 3. **Handy 1:** bei „Antwort“ auf **Scannen** tippen und den Code von Handy 2 scannen → verbunden → „Spiel starten“.
 
 Statt zu scannen lassen sich die Codes per Messenger schicken („Teilen“) und einfügen. Am zuverlässigsten im selben WLAN
@@ -112,16 +112,18 @@ Schnellnachrichten über 💬. Revanche im gleichen Raum nach Spielende.
 - Kommandanten vor dem Spiel nachlesen und wählen: aufs Porträt tippen (Gefecht-Menü und Online-Lobby)
 - Handy: stufenloser Fingerzoom (rastet weich auf scharfe Stufen ein), Mausrad zum Zeiger hin, scharfe Darstellung bei hoher Pixeldichte
 - Die KI gibt bei aussichtsloser Lage auf (abschaltbar)
-- Karteneditor mit Symmetrie-Werkzeug, Export/Import
+- Karteneditor mit Symmetrie-Werkzeug, Export/Import und **🎲 Zufallskarte**: Spielerzahl (2/4), Größe, Landform (Kontinent, Insel, Ring, zwei Kontinente, Gebirgspass, Seenplatte, langes Tal) und Landschaft wählen – der Generator (`js/mapgen.js`) baut eine symmetrische Karte und prüft sie auf Fairness (gleiche Gebäude, gleich lange Wege)
+- Kommandantenwahl mit **🎲 Zufall** je Platz (oder „Alle Kommandanten zufällig“); ausgelost wird erst beim Spielstart, möglichst ohne Doppelungen – auch im Einladungs-Raum
 - Speichern (3 Slots + Autosave), Kampfanimationen, Chiptune-Musik
 
 ## Entwicklung
 - `node tests/core.test.js` – Regeltests; `node tests/net.test.js` – Online-Spiel (Server, Synchronität, Wiederverbindung); `node tests/p2p.test.js` – Handy zu Handy: Verbindungscodes und Einladungslink (Relay-Protokoll, Stückelung, Verschlüsselung, Zeitüberschreitungen – mit nachgebildetem ntfy.sh)
 - `node tests/undo.test.js` – Rückgängig-Regeln
+- `node tests/random.test.js` – Zufallskarten (alle Landformen/Größen fair und spielbar) und Zufalls-Kommandanten
 - `node tools/sim.js` – KI-gegen-KI-Simulation über alle Karten
 - `node tools/co-balance.js [--seeds 3] [--maps grenzland,langes-tal] [--focus nora]` – Kommandanten-Balance: KI gegen KI (schwer gegen schwer), jedes Paar in beiden Sitzen, Siegquote je Kommandant (Ziel 40–60 %), `--json`/`--compare` für Vorher/Nachher
 - `node tools/check-maps.js` – Kartenprüfung
-- `node tools/mapgen.js` – erzeugt js/maps.js neu (symmetrische, faire Karten); `node tools/preview-maps.js` – PNG-Übersicht
+- `node tools/mapgen.js` – erzeugt js/maps.js neu (symmetrische, faire Karten; der Generator-Kern liegt in `js/mapgen.js` und läuft auch im Browser); `node tools/preview-maps.js` – PNG-Übersicht
 - `node tools/sim.js --limit auto` – Simulation mit Tageslimit; `tools/bench.sh '<tune-json>'` vergleicht KI-Parameter nach Ø Spieltagen
 - Spiellogik (`js/data.js`, `js/game.js`, `js/ai.js`, Karten) und Spielräume (`js/room.js`, genutzt vom PC-Server und vom Gastgeber-Handy) sind DOM-frei.
 - Darstellung (`js/render.js`): Geländefelder werden vektoriell in 16er-Koordinaten gemalt und je Umgebung gecacht (Detailfaktor 2–4 je Kartengröße); Einheiten/Porträts entstehen per Scale3x aus den 16×16-Rastern in `js/sprites*.js`.

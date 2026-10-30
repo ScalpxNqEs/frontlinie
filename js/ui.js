@@ -299,10 +299,11 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     return p;
   };
 
-  UI.confirm = function (text, yes, no) {
+  /** Rückfrage → Promise<bool>; yesFirst = „Ja“ ist vorausgewählt (Enter/OK bestätigt sofort), sonst „Nein“ */
+  UI.confirm = function (text, yes, no, yesFirst) {
     return new Promise(function (resolve) {
       UI.menu([{ label: yes || 'Ja', value: true }, { label: no || 'Nein', value: false }], {
-        title: text, cls: 'confirm', initial: 1,
+        title: text, cls: 'confirm', initial: yesFirst ? 0 : 1,
         onSelect: function (it) { resolve(it.value); },
         onCancel: function () { resolve(false); }
       });
@@ -414,10 +415,12 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       var auto = Store.get('save:auto', null);
       var items = [];
       if (auto) items.push({ label: 'Fortsetzen', sub: auto.label || '', value: 'continue' });
+      // Veröffentlichte Fassung (GitHub Pages, tools/build-web.js): kein PC-Server → kein „Online-Gefecht“
+      var staticBuild = !!document.querySelector('meta[name="frontlinie-build"][content="static"]');
+      if (G.P2P && G.P2P.supported()) items.push({ label: 'Mit Freunden spielen', sub: 'Einladungslink', value: 'p2p' });
+      items.push({ label: 'Gefecht', sub: 'gegen die KI', value: 'skirmish' });
       items.push({ label: 'Kampagne', value: 'campaign' });
-      items.push({ label: 'Gefecht', value: 'skirmish' });
-      items.push({ label: 'Online-Gefecht', sub: 'Handy & Netzwerk', value: 'online' });
-      if (G.P2P && G.P2P.supported()) items.push({ label: 'Handy zu Handy', sub: 'Direkt, ohne PC', value: 'p2p' });
+      if (!staticBuild) items.push({ label: 'Online-Gefecht', sub: 'über den PC-Server', value: 'online' });
       if (G.App && G.App.standalone()) items.push({ label: 'Offline-Speicher', sub: 'Stand der App', value: 'phoneapp' });
       else items.push({ label: 'Handy-App', sub: 'offline aufs Handy', value: 'phoneapp' });
       items.push({ label: 'Spiel laden', value: 'load' });
@@ -616,7 +619,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     var CONTROL = online ? ['host', 'net', 'ai:leicht', 'ai:normal', 'ai:schwer'] : ['human', 'ai:leicht', 'ai:normal', 'ai:schwer'];
     var CONTROL_LABEL = { 'human': 'Mensch', 'host': 'Du', 'net': 'Mitspieler (Netz)', 'ai:leicht': 'KI leicht', 'ai:normal': 'KI normal', 'ai:schwer': 'KI schwer' };
     UI.screen('', function (wrap) {
-      wrap.appendChild(h('h2', { text: p2p ? 'HANDY ZU HANDY · KARTE WÄHLEN' : online ? 'ONLINE-GEFECHT · KARTE WÄHLEN' : 'GEFECHT' }));
+      wrap.appendChild(h('h2', { text: p2p ? 'MIT FREUNDEN SPIELEN · KARTE WÄHLEN' : online ? 'ONLINE-GEFECHT · KARTE WÄHLEN' : 'GEFECHT' }));
       var grid = h('div', { class: 'grid2' });
       var list = h('div', { class: 'panel maplist' });
       var right = h('div', { class: 'panel' });
@@ -631,7 +634,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       });
       function slotCfg(slot) {
         var c = S.slots[slot] || {};
-        var co = c.co && G.COS[c.co] ? c.co : G.FACTIONS[c.faction || G.FACTION_ORDER[slot - 1]].co;
+        var co = c.co && G.isCoChoice(c.co) ? c.co : G.FACTIONS[c.faction || G.FACTION_ORDER[slot - 1]].co;
         return {
           faction: c.faction || G.FACTION_ORDER[slot - 1],
           co: co,
@@ -680,7 +683,8 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
             fusionBtn.title = p2 ? 'Fusion mit ' + G.COS[p2].name + ' – antippen zum Ändern oder Entfernen' : 'Zweiten Kommandanten dazunehmen: beide Fähigkeiten (je 70 %), beide Kräfte zugleich';
           }
           row.appendChild(pick);
-          var coCyc = cycler(G.CO_ORDER, Math.max(0, G.CO_ORDER.indexOf(cfg.co)), function (v) { S.slots[slot].co = v; if (S.slots[slot].co2 === v) S.slots[slot].co2 = null; refreshPortrait(); }, function (v) { return G.COS[v].name; });
+          var CO_CHOICES = [G.RANDOM_CO].concat(G.CO_ORDER);   // „Zufall“ wird erst beim Start ausgelost
+          var coCyc = cycler(CO_CHOICES, Math.max(0, CO_CHOICES.indexOf(cfg.co)), function (v) { S.slots[slot].co = v; if (S.slots[slot].co2 === v) S.slots[slot].co2 = null; refreshPortrait(); }, function (v) { return v === G.RANDOM_CO ? '🎲 Zufall' : G.COS[v].name; });
           var fusionBtn = h('button', { class: 'btn small fusion', onclick: function () {
             var cur = S.slots[slot];
             UI.coSheet(cur.co2 || null, { pick: true, faction: cur.faction, title: 'Fusion – zweiter Kommandant', exclude: cur.co, allowNone: !!cur.co2,
@@ -720,6 +724,10 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
         right.appendChild(opts);
         var acts = h('div', { class: 'actions' });
         acts.appendChild(h('button', { class: 'btn', text: 'Zurück', onclick: function () { UI.sfx('cancel'); back(); } }));
+        acts.appendChild(h('button', { class: 'btn', text: '🎲 Alle Kommandanten zufällig', title: 'Jeder Platz bekommt „Zufall“ – ausgelost wird beim Start', onclick: function () {
+          for (var q = 1; q <= m.players; q++) { S.slots[q].co = G.RANDOM_CO; S.slots[q].co2 = null; }
+          UI.sfx('select'); renderRight();
+        } }));
         acts.appendChild(h('button', { class: 'btn primary', text: online ? 'Raum eröffnen ▶' : 'Schlacht beginnen ▶', onclick: start }));
         right.appendChild(acts);
       }
@@ -751,6 +759,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
         }
         Store.set('skirmish', S);
         UI.sfx('confirm');
+        G.resolveRandomCOs(players);   // „Zufall“ auslosen (die Einstellung bleibt für die nächste Partie „Zufall“)
         G.Play.startNew({
           map: m, players: players, fog: (S.vision || 'erkundung') !== 'offen', funds: S.funds, income: S.income,
           meta: { mode: 'skirmish', powers: S.powers !== false, income: S.income, aiResign: S.aiResign !== false, weatherMode: S.weather || 'auto', vision: S.vision || 'erkundung' }

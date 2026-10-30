@@ -546,9 +546,10 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
           var status = seat.kind === 'ai' ? '' : !seat.taken ? '<span class="dot wait"></span>' : isOn ? '<span class="dot on"></span>' : '<span class="dot off"></span>';
           row.appendChild(h('div', { class: 'who', html: status + '<b>' + UI.esc(who) + '</b><br><small>' + UI.esc(G.FACTIONS[seat.faction].name) + ' · Team ' + seat.team + (seat.host ? ' · Gastgeber' : '') + '</small>' }));
           if (mine) {
-            row.appendChild(UI.cycler(G.CO_ORDER, Math.max(0, G.CO_ORDER.indexOf(seat.co)), function (v) {
+            var CO_CHOICES = [G.RANDOM_CO].concat(G.CO_ORDER);
+            row.appendChild(UI.cycler(CO_CHOICES, Math.max(0, CO_CHOICES.indexOf(seat.co)), function (v) {
               api(seatUrl, { token: s.token, co: v });
-            }, function (v) { return G.COS[v].name; }));
+            }, function (v) { return v === G.RANDOM_CO ? '🎲 Zufall' : G.COS[v].name; }));
             // Fusion: zweiten Kommandanten wählen bzw. wieder abwählen (Antwort: CO-Id, 'none' oder null)
             var partner = seat.co2 && G.COS[seat.co2] ? G.COS[seat.co2] : null;
             row.appendChild(h('button', { class: 'btn small fusion', text: partner ? 'Fusion: ' + partner.name.split(' ')[0] + ' ✕' : '＋ Fusion',
@@ -559,8 +560,8 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
                 });
               } }));
           } else {
-            var eff = G.coFor(seat);
-            row.appendChild(h('div', { class: 'co-name', text: eff ? eff.name : seat.co }));
+            var eff = seat.co === G.RANDOM_CO ? null : G.coFor(seat);
+            row.appendChild(h('div', { class: 'co-name', text: eff ? eff.name : seat.co === G.RANDOM_CO ? '🎲 Zufall' : seat.co }));
           }
           if (s.host && !seat.host && L.phase === 'lobby') {
             var toAi = seat.kind === 'human';

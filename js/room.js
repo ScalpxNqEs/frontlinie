@@ -75,7 +75,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       if (teams.size < 2) return 'Mindestens zwei Teams nötig';
       for (var i = 0; i < setup.seats.length; i++) {
         var s = setup.seats[i];
-        if (!G.FACTIONS[s.faction] || !G.COS[s.co]) return 'Fraktion oder Kommandant unbekannt';
+        if (!G.FACTIONS[s.faction] || !G.isCoChoice(s.co)) return 'Fraktion oder Kommandant unbekannt';
         // Fusion: zweiter Kommandant ist optional; leer/null heißt keiner, gleich dem ersten wird ignoriert
         if (s.co2 != null && s.co2 !== '' && !G.COS[s.co2]) return 'Zweiter Kommandant unbekannt';
       }
@@ -115,6 +115,8 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
             name: s.kind === 'human' && s.name ? s.name : undefined };
         })
       };
+      // „Zufall“ erst jetzt auflösen – so bleibt die Wahl bis zum Start eine Überraschung
+      G.resolveRandomCOs(cfg.players, function () { return rnd(1e9) / 1e9; });
       var g = G.gameFromSetup(cfg);
       room.game = g;
       room.startEvents = g.startEvents || [];
@@ -308,7 +310,7 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
             if (body.kind === 'ai') { target.token = null; target.name = null; }
           }
         }
-        if (body.co && G.COS[body.co]) {
+        if (body.co && G.isCoChoice(body.co)) {
           target.co = body.co;
           if (target.co2 === body.co) target.co2 = null; // Haupt-CO gleich dem Partner → Fusion auflösen
         }

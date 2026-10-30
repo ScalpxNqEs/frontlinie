@@ -10,6 +10,11 @@ for (const f of pwa.appFiles()) {
   fs.mkdirSync(path.dirname(path.join(OUT, f)), { recursive: true });
   fs.copyFileSync(path.join(ROOT, f), path.join(OUT, f));
 }
+// Kennzeichen „statische Fassung“: ohne PC-Server blendet das Titelmenü „Online-Gefecht“ aus
+const idx = path.join(OUT, 'index.html');
+const html = fs.readFileSync(idx, 'utf8');
+if (html.indexOf('<meta charset="utf-8">') < 0) throw new Error('index.html: <meta charset="utf-8"> nicht gefunden');
+fs.writeFileSync(idx, html.replace('<meta charset="utf-8">', '<meta charset="utf-8">\n<meta name="frontlinie-build" content="static">'));
 fs.writeFileSync(path.join(OUT, 'sw.js'), pwa.serviceWorker());
 fs.writeFileSync(path.join(OUT, '.nojekyll'), '');
 // Hosting-Hinweise: sw.js darf nicht lange gecacht werden, sonst sehen Handys neue Versionen erst spät
