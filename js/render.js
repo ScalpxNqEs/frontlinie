@@ -1421,6 +1421,24 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     }
     // Nebel
     var vis = view.viewer != null ? g.visibility(view.viewer) : null;
+    // Erkundung: nie gesehene Felder sind grau/schwarz
+    if (view.explored) {
+      var ex = view.explored, greyL = view.unexplored !== 'schwarz' ? view.terrainGrey : null;
+      for (var ey = y0; ey <= y1; ey++) for (var exx = x0; exx <= x1; exx++) {
+        if (ex[ey * map.w + exx]) continue;
+        if (greyL) { ctx.drawImage(greyL, exx * TS, ey * TS, TS, TS, exx * TS, ey * TS, TS, TS); continue; }
+        rect(ctx, exx * TS, ey * TS, TS, TS, '#05050c');
+        if (exx > 0 && ex[ey * map.w + exx - 1]) rect(ctx, exx * TS - 2, ey * TS, 2, TS, 'rgba(5,5,12,0.55)');
+        if (ey > 0 && ex[(ey - 1) * map.w + exx]) rect(ctx, exx * TS, ey * TS - 2, TS, 2, 'rgba(5,5,12,0.55)');
+      }
+    }
+    // Nebel-Overlay
+    if (vis) {
+      ctx.fillStyle = 'rgba(10,12,42,0.45)';
+      for (var y = y0; y <= y1; y++) for (var x = x0; x <= x1; x++) if (!vis[y * map.w + x]) ctx.fillRect(x * TS, y * TS, TS, TS);
+    }
+    // Wetter-Tönung (Nacht/Regen/Schnee) unter Reichweiten und Einheiten, damit beide gut lesbar bleiben
+    if (view.weather && view.weather !== 'klar') drawWeatherTint(ctx, view, x0, y0, x1, y1);
     // Bewegungs- und Angriffsbereiche: Bewegung = blaue Fläche mit heller Kontur,
     // Angriff = rot schraffiert mit roter Kontur (klar unterscheidbar, auch wenn beides zu sehen ist)
     var pulse = 0.06 * Math.sin(view.time / 180);
@@ -1467,6 +1485,8 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       ctx.fill();
       if (u.dived) ctx.globalAlpha = 0.55;
       if (done) ctx.globalAlpha = 0.85;
+      // Bewegung durch den Nebel (Gegnerzug): nur schemenhaft zeigen, die Abdunklung liegt jetzt darunter
+      if (an && vis && !vis[Math.round(uy) * map.w + Math.round(ux)]) ctx.globalAlpha = 0.45;
       ctx.drawImage(spr, dx, dy, TS, TS);
       ctx.globalAlpha = 1;
       // Status-Symbole
@@ -1499,22 +1519,6 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
       } else if (pl.act === 'capture') drawBadge(ctx, 'capture', d.x * TS + 9, d.y * TS + 1);
       fillRR(ctx, d.x * TS + 1, d.y * TS + 1, 5, 5, 1, '#0c2a6a'); fillRR(ctx, d.x * TS + 2, d.y * TS + 2, 3, 3, 0.6, '#8cd0ff');
     });
-    // Erkundung: nie gesehene Felder sind grau/schwarz
-    if (view.explored) {
-      var ex = view.explored, greyL = view.unexplored !== 'schwarz' ? view.terrainGrey : null;
-      for (var ey = y0; ey <= y1; ey++) for (var exx = x0; exx <= x1; exx++) {
-        if (ex[ey * map.w + exx]) continue;
-        if (greyL) { ctx.drawImage(greyL, exx * TS, ey * TS, TS, TS, exx * TS, ey * TS, TS, TS); continue; }
-        rect(ctx, exx * TS, ey * TS, TS, TS, '#05050c');
-        if (exx > 0 && ex[ey * map.w + exx - 1]) rect(ctx, exx * TS - 2, ey * TS, 2, TS, 'rgba(5,5,12,0.55)');
-        if (ey > 0 && ex[(ey - 1) * map.w + exx]) rect(ctx, exx * TS, ey * TS - 2, TS, 2, 'rgba(5,5,12,0.55)');
-      }
-    }
-    // Nebel-Overlay
-    if (vis) {
-      ctx.fillStyle = 'rgba(10,12,42,0.45)';
-      for (var y = y0; y <= y1; y++) for (var x = x0; x <= x1; x++) if (!vis[y * map.w + x]) ctx.fillRect(x * TS, y * TS, TS, TS);
-    }
     drawFx(ctx);
     if (view.weather && view.weather !== 'klar') drawWeather(ctx, view, x0, y0, x1, y1);
     // Cursor
@@ -1522,12 +1526,17 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   };
 
-  /** Wetter-Effekte im Kartenraum: Nacht abdunkeln, Regen- und Schneepartikel */
+  /** Wetter-Tönung im Kartenraum (liegt unter Reichweiten und Einheiten) */
+  function drawWeatherTint(ctx, view, x0, y0, x1, y1) {
+    var tint = { nacht: 'rgba(6,8,36,0.40)', regen: 'rgba(30,48,78,0.18)', schnee: 'rgba(225,235,255,0.10)' }[view.weather];
+    if (!tint) return;
+    ctx.fillStyle = tint; ctx.fillRect(x0 * TS, y0 * TS, (x1 - x0 + 1) * TS, (y1 - y0 + 1) * TS);
+  }
+  /** Wetter-Effekte im Kartenraum: Sternfunkeln auf Wasser, Regen- und Schneepartikel */
   function drawWeather(ctx, view, x0, y0, x1, y1) {
     var X = x0 * TS, Y = y0 * TS, W = (x1 - x0 + 1) * TS, H = (y1 - y0 + 1) * TS, t = view.time;
     var area = (x1 - x0 + 1) * (y1 - y0 + 1);
     if (view.weather === 'nacht') {
-      ctx.fillStyle = 'rgba(6,8,36,0.40)'; ctx.fillRect(X, Y, W, H);
       for (var s = 0; s < area * 0.05; s++) {
         var sx = X + Math.floor(hash(s, 7, 3) * W), sy = Y + Math.floor(hash(s, 9, 5) * H);
         var tx = Math.floor(sx / TS), ty = Math.floor(sy / TS);
@@ -1535,7 +1544,6 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
         if ((Math.floor(t / 600) + s) % 5) rect(ctx, sx, sy, 1, 1, 'rgba(255,255,220,0.8)');
       }
     } else if (view.weather === 'regen') {
-      ctx.fillStyle = 'rgba(30,48,78,0.18)'; ctx.fillRect(X, Y, W, H);
       ctx.fillStyle = 'rgba(200,215,255,0.55)';
       var n = Math.floor(area * 0.9);
       for (var i = 0; i < n; i++) {
@@ -1545,7 +1553,6 @@ var G = (typeof globalThis !== 'undefined' ? globalThis : window).G = (globalThi
         for (var k = 0; k < 4; k++) ctx.fillRect(Math.floor(X + pxx - k * 0.35), Math.floor(Y + py + k), 1, 1);
       }
     } else if (view.weather === 'schnee') {
-      ctx.fillStyle = 'rgba(225,235,255,0.10)'; ctx.fillRect(X, Y, W, H);
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       var m = Math.floor(area * 0.5);
       for (var j = 0; j < m; j++) {
